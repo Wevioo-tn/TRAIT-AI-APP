@@ -1,0 +1,62 @@
+/*
+ * Ported verbatim from TRAIT-AI/index.html's <style> block — the base
+ * resets, animations, and the responsive classes already designed and
+ * validated on the mockup. Do not "improve" these independently of the
+ * mockup; if the mockup's responsive behavior changes, port the diff here.
+ */
+body { margin:0; background:#EEF1F5; font-family:'IBM Plex Sans',system-ui,sans-serif; color:#16222E; -webkit-font-smoothing:antialiased; }
+a { color:#1E5C8F; text-decoration:none; }
+a:hover { color:#0B2239; text-decoration:underline; }
+* { box-sizing:border-box; }
+@keyframes scanline { 0%{transform:translateY(0)} 100%{transform:translateY(320px)} }
+@keyframes pulse { 0%,100%{opacity:.35} 50%{opacity:1} }
+@keyframes spin { to { transform:rotate(360deg) } }
+@keyframes fillbar { from { width:0 } to { width:100% } }
+
+/* ===== Responsive structure (layout only — no color/typography/spacing-token changes) ===== */
+html, body { max-width:100%; overflow-x:hidden; }
+
+.tp-login-shell { flex-wrap:wrap; }
+.tp-login-stats { flex-wrap:wrap; row-gap:14px; }
+.tp-uploadhead, .tp-tablehead, .tp-pagerow, .tp-topbar, .tp-topbar-actions, .tp-analyse-summary { flex-wrap:wrap; row-gap:8px; }
+
+.tp-table-scroll, .tp-doc-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.tp-datatable { min-width:860px; }
+.tp-doc-surface { min-width:560px; }
+
+.tp-counters { display:grid; grid-template-columns:repeat(5,1fr); }
+.tp-verdict-grid { display:grid; grid-template-columns:repeat(3,1fr); }
+.tp-mentions-grid { display:grid; grid-template-columns:1fr 1fr; }
+.tp-analyse-grid { display:grid; grid-template-columns:minmax(560px,1fr) minmax(520px,1fr); }
+.tp-doc-sticky { position:sticky; top:76px; }
+
+@media (max-width:1180px) {
+  .tp-analyse-grid { grid-template-columns:1fr; }
+  .tp-doc-sticky { position:static; top:auto; }
+}
+@media (max-width:860px) {
+  .tp-login-shell { flex-direction:column; }
+  .tp-login-brand { width:100% !important; min-width:0 !important; }
+}
+@media (max-width:900px) {
+  .tp-counters { grid-template-columns:repeat(3,1fr); }
+  .tp-dropzone-row { flex-direction:column; }
+  .tp-dropzone-action { width:100% !important; flex:1 1 100% !important; }
+  .tp-verdict-grid { grid-template-columns:1fr; }
+  .tp-verdict-grid > div:not(:last-child) { border-right:none !important; border-bottom:1px solid #EDF1F5; }
+}
+@media (max-width:640px) {
+  .tp-mentions-grid { grid-template-columns:1fr; }
+  .tp-topbar-sub, .tp-vdivider { display:none; }
+  .tp-check-row { flex-wrap:wrap; }
+  .tp-check-actions { flex:1 1 100% !important; justify-content:flex-end; margin-top:6px; }
+}
+@media (max-width:480px) {
+  .tp-counters { grid-template-columns:repeat(2,1fr); }
+  .tp-page-pad { padding-left:14px !important; padding-right:14px !important; }
+  .tp-login-brand { padding:32px 24px !important; }
+  .tp-login-formwrap { padding:20px !important; }
+}
+@media (max-width:380px) {
+  .tp-toast { right:14px !important; left:14px !important; min-width:0 !important; max-width:none !important; }
+}

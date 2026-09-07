@@ -1,0 +1,24 @@
+# Env
+.env
+
+# Real bank-instrument scans used for the OCR accuracy pilot — never committed
+back/pilot_samples/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+front/dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

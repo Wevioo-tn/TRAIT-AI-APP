@@ -1,0 +1,149 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trait}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trait}
+      POSTGRES_DB: ${POSTGRES_DB:-trait_ai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./back/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trait} -d ${POSTGRES_DB:-trait_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ldap:
+    # Bitnami retired free versioned tags on Docker Hub in 2025; "latest"
+    # under bitnamilegacy is the still-pullable free equivalent.
+    image: bitnamilegacy/openldap:latest
+    environment:
+      LDAP_ADMIN_USERNAME: admin
+      LDAP_ADMIN_PASSWORD: adminpassword
+      LDAP_ROOT: dc=trait-ai,dc=local
+      # LDAP_USER_DC is deliberately NOT set: it's deprecated and, worse,
+      # setting it to "users" (the image's own default OU name) makes the
+      # entrypoint try to create ou=users twice and crash with exit 68
+      # ("Already exists") — confirmed by running the image standalone.
+      # A real (throwaway) test directory, not a stub — see
+      # app/services/ldap_auth.py. h.mansouri matches the design mockup's
+      # own login placeholder ("h.mansouri" / Identifiant field).
+      LDAP_USERS: h.mansouri,a.trabelsi
+      LDAP_PASSWORDS: secret123,secret123
+    ports:
+      - "${LDAP_PORT:-1389}:1389"
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:1389 -b dc=trait-ai,dc=local -D 'cn=admin,dc=trait-ai,dc=local' -w adminpassword >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./back
+      # back/Dockerfile is multi-stage now (Sprint 7 hardening); without
+      # this, `docker compose build` would silently pick the *last* stage
+      # (production — no --reload, no bind-mount-friendly setup) instead.
+      target: dev
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/${POSTGRES_DB:-trait_ai}
+      DATABASE_URL_TEST: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/trait_ai_test
+      REDIS_URL: redis://redis:6379/0
+      LDAP_URL: ldap://ldap:1389
+      ENVIRONMENT: development
+      # Kept in sync with FRONTEND_PORT below — if that's overridden in
+      # .env without updating this too, the browser's CORS preflight will
+      # fail again exactly like the bug this setting was added to fix.
+      CORS_ALLOWED_ORIGINS: http://localhost:${FRONTEND_PORT:-5173},http://127.0.0.1:${FRONTEND_PORT:-5173}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./back:/app
+      # Named volume shadowing the /app/uploads subdir: uploaded scans
+      # persist across restarts without landing in the bind-mounted source
+      # tree (and therefore never end up in git).
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ldap:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./back
+      target: dev
+    command: celery -A app.worker worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/${POSTGRES_DB:-trait_ai}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      # Real OCR/extraction (Sprint 8) — see app/services/vlm_extraction.py.
+      # Only the worker needs these: extraction runs inside the Celery
+      # task, never in the backend's request path. Defaults to "stub" —
+      # opt in explicitly, never accidentally start billing/routing scans
+      # to a real provider.
+      OCR_PROVIDER: ${OCR_PROVIDER:-stub}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
+      # Defaults point at the bundled `ollama` service below — override to
+      # point at any other OpenAI-Chat-Completions-compatible server.
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://ollama:11434/v1}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-llava}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-not-needed}
+    volumes:
+      - ./back:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Real, local OpenAI-compatible vision model server — the "local_llm"
+  # OCR_PROVIDER path (see app/services/vlm_extraction.py). Harmless to
+  # leave running even when unused: the worker only ever reaches out to it
+  # once OCR_PROVIDER=local_llm is actually set. No model is pulled
+  # automatically — run `make ollama-pull` once after first `up`.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+
+  frontend:
+    build:
+      context: ./front
+      target: dev
+    environment:
+      VITE_API_BASE_URL: http://localhost:${BACKEND_PORT:-8000}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./front:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  uploads_data:
+  ollama_data:

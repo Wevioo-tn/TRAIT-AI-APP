@@ -1,0 +1,131 @@
+# Production composition — built on the same `production` Dockerfile
+# targets validated in Sprint 7 (see BACKLOG.md). Differences from
+# docker-compose.yml (dev):
+#   - backend/worker/frontend build the `production` stage: no bind mounts,
+#     no --reload, no dev/test dependencies, non-root.
+#   - frontend is nginx serving the static build and reverse-proxying /api
+#     to backend (see front/nginx.conf) — same-origin, no CORS needed.
+#   - No default credentials/secrets: every value below that matters for
+#     security is a required env var with no fallback, so this refuses to
+#     start with the dev defaults by accident.
+#
+# postgres/redis/ldap are still included here so the stack is runnable
+# end-to-end as a reference/demo. A real deployment will very likely point
+# LDAP_URL/DATABASE_URL at the organization's actual directory and managed
+# database instead of these — see README.md's "Production deployment"
+# section.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  ldap:
+    image: bitnamilegacy/openldap:latest
+    environment:
+      LDAP_ADMIN_USERNAME: ${LDAP_ADMIN_USERNAME:?set LDAP_ADMIN_USERNAME}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD:?set LDAP_ADMIN_PASSWORD}
+      LDAP_ROOT: ${LDAP_ROOT:?set LDAP_ROOT}
+      # Optional — only useful for exercising this bundled demo directory
+      # itself (e.g. a smoke test). A real deployment points LDAP_URL/
+      # LDAP_USER_DN_TEMPLATE at an existing corporate directory instead
+      # and doesn't need these at all.
+      LDAP_USERS: ${LDAP_USERS:-}
+      LDAP_PASSWORDS: ${LDAP_PASSWORDS:-}
+    volumes:
+      - ldap_data:/bitnami/openldap
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:1389 -b $$LDAP_ROOT -D cn=$$LDAP_ADMIN_USERNAME,$$LDAP_ROOT -w $$LDAP_ADMIN_PASSWORD >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./back
+      target: production
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      LDAP_URL: ldap://ldap:1389
+      LDAP_USER_DN_TEMPLATE: ${LDAP_USER_DN_TEMPLATE:?set LDAP_USER_DN_TEMPLATE, e.g. cn={username},ou=users,dc=example,dc=com}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a real random value, not the dev default}
+      ENVIRONMENT: production
+      # Same-origin in production (see front/nginx.conf's reverse proxy) —
+      # no cross-origin frontend, so no CORS_ALLOWED_ORIGINS needed here.
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      ldap: {condition: service_healthy}
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./back
+      target: production
+    command: celery -A app.worker worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
+      # Real OCR/extraction (see app/services/vlm_extraction.py). Optional
+      # — defaults to "stub" so a production deploy that hasn't made the
+      # OCR vendor decision yet still starts cleanly. Point LOCAL_LLM_*
+      # at your own model server; this composition doesn't bundle one
+      # (unlike docker-compose.yml's dev `ollama` service).
+      OCR_PROVIDER: ${OCR_PROVIDER:-stub}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-not-needed}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./front
+      target: production
+      args:
+        # Empty: the app calls relative /api/... URLs, resolved same-origin
+        # by nginx's reverse proxy (front/nginx.conf) — no public backend
+        # hostname to bake in.
+        VITE_API_BASE_URL: ""
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  uploads_data:
+  ldap_data:
