@@ -2,10 +2,9 @@
 
 ``LocalFileStorage`` is the only implementation today (files on a Docker
 volume). It's kept behind this small interface — not because a swap is
-planned right now, but because the one thing we already know about this
-project is that OCR/NLP will eventually run in a separate worker (Sprint 4)
-that also needs to read these files; if that ever means object storage
-instead of a shared volume, this is the one place that changes.
+planned right now, but because if a future deploy ever needs object storage
+instead of a shared volume (e.g. running the backend as multiple replicas),
+this is the one place that changes.
 
 Disk I/O is genuinely blocking, so every public method runs it in a thread
 via Starlette's ``run_in_threadpool`` rather than stalling the async event

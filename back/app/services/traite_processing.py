@@ -2,9 +2,9 @@
 NLP matching -> statut transition.
 
 Deliberately synchronous (plain SQLAlchemy ``Session``, not the async
-engine) since this is designed to run inside a Celery worker, where
-synchronous, straight-line code is simpler to reason about than mixing
-event loops into a task queue.
+engine) since this is designed to run inside a FastAPI background task
+(see app/tasks/traite_processing.py), where synchronous, straight-line code
+is simpler to reason about than mixing event loops into a background job.
 """
 import logging
 import re

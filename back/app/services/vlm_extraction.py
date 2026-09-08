@@ -223,7 +223,7 @@ def _client_azure_openai(settings: Settings) -> tuple[AzureOpenAI, str]:
 
 def get_extractor() -> Extractor:
     """Selects the extraction backend from ``OCR_PROVIDER`` — the same
-    ``Extractor`` seam ``execute_analysis``/the Celery task always
+    ``Extractor`` seam ``execute_analysis``/the background task always
     expected. Defaults to ``StubExtractor``: an unset or misconfigured
     provider must never silently fall back to a real, possibly-billed
     external call."""

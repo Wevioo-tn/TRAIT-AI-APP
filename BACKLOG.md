@@ -449,6 +449,68 @@ clean. Live-verified against the real running dev stack: seeded the dev DB,
 logged in for real over HTTP, made an authenticated request, confirmed a
 wrong password still 401s.
 
+### ✅ Sprint 11 — Worker/Celery/Redis removed, analysis runs in `backend` (done)
+**Per your call** — asked to drop the separate `worker` process entirely
+and run OCR/NLP analysis inside `backend`; confirmed the mechanism as
+FastAPI `BackgroundTasks` (still 202-immediately, still polled via
+`GET .../status`, only the internal dispatch changes) rather than any
+alternative that would touch the frontend's polling contract.
+
+- [x] 11.1 `app/worker.py` (the Celery app instance) deleted.
+  `app/tasks/traite_processing.py`'s `launch_traite_analysis` (a
+  `@celery_app.task`) became a plain function `run_traite_analysis` —
+  same body (sync engine via `SYNC_DATABASE_URL_OVERRIDE`-aware
+  `_sync_database_url()`, `execute_analysis`, commit, dispose). Its
+  docstring records the one real behavior change this trades away: a
+  background task now lives only as long as the `backend` process that
+  started it — a restart mid-analysis loses it silently (no retry, no
+  record beyond whatever was already committed), where Celery+Redis
+  queued durably across restarts. Accepted deliberately for simplicity;
+  nothing in this app's actual usage pattern (interactive, one analysis
+  at a time, a human waiting on the result) depends on that durability.
+- [x] 11.2 `routes/traites.py`'s `lancer_analyse` takes a
+  `BackgroundTasks` param and calls
+  `background_tasks.add_task(run_traite_analysis, str(traite_id))`
+  instead of `.delay(...)`.
+- [x] 11.3 `celery`/`redis` dropped from `requirements.txt`; `redis_url`
+  dropped from `core/config.py`; the `redis` and `worker` services and
+  every `REDIS_*`/broker env var removed from both compose files and
+  `.env*` — `OCR_PROVIDER`/`AZURE_OPENAI_*` moved onto `backend` itself,
+  since that's where extraction now actually runs.
+- [x] 11.4 Tests: `test_celery_task.py` renamed to
+  `test_traite_analysis_task.py`, calling `run_traite_analysis` directly
+  (no Celery wording left). `test_analyse_endpoint.py`'s dispatch spy now
+  monkeypatches `run_traite_analysis` itself rather than a `.delay()`
+  attribute — works because Starlette's `BackgroundTasks` run via
+  `run_in_threadpool` as part of the same ASGI call chain, so with the
+  `ASGITransport`-backed test client (no real network hop) the task has
+  already run by the time `await client.post(...)` returns.
+- [x] 11.5 Docs updated: README (architecture table, quickstart, project
+  layout, testing section, production section), both `trait-ai-app-dev`/
+  `trait-ai-app-ocr-providers` skills, `trait-ai-app-sprint-workflow`'s
+  "where things stand" note.
+
+**Real issue caught, not shipped**: moving `OCR_PROVIDER`/`AZURE_OPENAI_*`
+onto `backend` means the same container `pytest` runs in now also carries
+the real Azure credentials from `.env` (previously only `worker` saw
+them). Two tests in `test_vlm_extraction.py`
+(`test_client_azure_openai_requires_full_configuration`,
+`test_get_extractor_defaults_to_stub`) built a bare `Settings()`/
+`Settings(ocr_provider="azure_openai")` expecting empty/default fields —
+pydantic-settings reads env vars over field defaults, so both silently
+picked up the real ambient config and failed (one didn't raise, the other
+built a `VlmExtractor` instead of `StubExtractor`). Fixed by making both
+tests explicit about every field they care about instead of relying on
+ambient env being clean — the correct fix, since a real deployment
+legitimately needs those vars on the same service the tests run in now.
+Live-verified separately: temporarily flipped `.env` to
+`OCR_PROVIDER=stub`, recreated `backend`, drove a real HTTP flow
+(login → create traite → upload recto/verso → `POST .../analyse` → poll
+`.../status`) against the running container over the network — 202
+immediately, `en_cours` true then false, final statut
+`Écarts à traiter` (expected, `StubExtractor` has no party text to match)
+— then reverted `.env` and recreated `backend` again before committing.
+
 ## Backlog (not yet scheduled)
 
 - Party/entity unification (a company can be both an `adherent` and a

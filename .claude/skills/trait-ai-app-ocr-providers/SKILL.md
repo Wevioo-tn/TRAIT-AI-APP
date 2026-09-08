@@ -15,11 +15,12 @@ for that history; don't reintroduce it without checking why it was there
 and why it was dropped.
 
 **The one rule that catches everyone at least once**: editing `.env`
-does *nothing* until the `worker` container is recreated — Celery reads
-env vars once, at container start, not live.
+does *nothing* until the `backend` container is recreated — it reads env
+vars once, at container start, not live (extraction runs as a FastAPI
+background task inside `backend` itself, not a separate process).
 
 ```bash
-docker compose up -d worker
+docker compose up -d backend
 ```
 
 ## `stub` (default, safe)
@@ -40,11 +41,11 @@ AZURE_OPENAI_API_KEY=<your key>
 AZURE_OPENAI_DEPLOYMENT=<your deployment name>
 AZURE_OPENAI_API_VERSION=2024-08-01-preview
 ```
-Then `docker compose up -d worker`. Missing config fails fast with a
-clear `RuntimeError` in `docker compose logs worker` when a task runs
-(not at container startup) — no silent no-op. **Every launch sends real
-image bytes to Azure and is billed** — be deliberate about testing this
-path.
+Then `docker compose up -d backend`. Missing config fails fast with a
+clear `RuntimeError` in `docker compose logs backend` when the background
+task runs (not at container startup) — no silent no-op. **Every launch
+sends real image bytes to Azure and is billed** — be deliberate about
+testing this path.
 
 Not every deployment accepts every Chat Completions parameter — found
 live: a "gpt-6-astra" deployment rejected `temperature=0` outright
@@ -58,16 +59,16 @@ the deployment you're pointing at supports it.
 
 If `.env` is currently configured for `azure_openai` (check before doing
 anything that triggers analysis!), don't run a live browser upload/launch
-flow — it dispatches to whatever the persistent `worker` is configured
-for, and there's no way to route just one task to a different provider.
+flow — it dispatches to whatever the running `backend` is configured for,
+and there's no way to route just one task to a different provider.
 
 For changes to `execute_analysis`/the pipeline around extraction (not the
-extraction call itself), bypass Celery with a one-off script using
-`docker compose run --rm -e OCR_PROVIDER=stub backend python -c "..."`
+extraction call itself), bypass the background task with a one-off script
+using `docker compose run --rm -e OCR_PROVIDER=stub backend python -c "..."`
 that calls `execute_analysis(...)` directly against a real traite with
 `StubExtractor` (or a small fake `Extractor` built for the scenario, the
 way `back/tests/test_traite_processing.py` does with `_FakeExtractor`) —
-same pattern as that test file. This never touches the live `worker`
+same pattern as that test file. This never touches the live `backend`
 container's own environment or the real Azure resource.
 
 For changes to `VlmExtractor` itself (the prompt, JSON parsing, request

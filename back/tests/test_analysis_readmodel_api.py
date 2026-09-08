@@ -4,8 +4,8 @@ the real API (not just the pure unit tests in test_mentions_rules.py).
 
 Runs the real execute_analysis (sync) against the same physical test
 database the async `client` fixture talks to — two connections to one DB,
-which is exactly how the real app and the Celery worker relate in
-production. Uses its own throwaway engine (not the shared `sync_engine`
+which is exactly how the async request path and the sync background task
+relate in production. Uses its own throwaway engine (not the shared `sync_engine`
 fixture) and commits directly, since the imx rows need to be visible to
 the `client` fixture's independent async connection.
 

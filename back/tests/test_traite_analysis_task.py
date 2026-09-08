@@ -1,10 +1,12 @@
-"""Sprint 4 — proves the Celery task *wrapper* itself works: its own engine
-creation, the SYNC_DATABASE_URL_OVERRIDE env var, and its commit — not just
-execute_analysis in isolation (see test_traite_processing.py for that).
+"""Sprint 4/11 — proves the background-task *wrapper* itself works: its own
+engine creation, the SYNC_DATABASE_URL_OVERRIDE env var, and its commit —
+not just execute_analysis in isolation (see test_traite_processing.py for
+that).
 
-Calls the task directly rather than via .delay(), so no Redis/broker is
-needed here — see the docstring in app/tasks/traite_processing.py for why
-that's a legitimate way to test a Celery task's logic.
+Calls the function directly rather than via BackgroundTasks.add_task, so no
+running FastAPI app is needed here — see the docstring in
+app/tasks/traite_processing.py for why that's a legitimate way to test its
+logic (it's a plain function, not a decorated task).
 """
 from datetime import date
 from decimal import Decimal
@@ -14,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.traite import Face, Traite, TraiteDocument, TraiteStatut, VerificationCode, VerificationManuelle
-from app.tasks.traite_processing import launch_traite_analysis
+from app.tasks.traite_processing import run_traite_analysis
 
 
 def test_task_processes_traite_end_to_end(sync_engine, tmp_path, monkeypatch):
@@ -48,7 +50,7 @@ def test_task_processes_traite_end_to_end(sync_engine, tmp_path, monkeypatch):
         traite_id = traite.id
 
     try:
-        launch_traite_analysis(str(traite_id))
+        run_traite_analysis(str(traite_id))
 
         with Session(sync_engine) as session:
             traite = session.get(Traite, traite_id)

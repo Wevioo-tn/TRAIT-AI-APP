@@ -30,9 +30,6 @@ class Settings(BaseSettings):
     upload_dir: str = "/app/uploads"
     max_upload_size_bytes: int = 15 * 1024 * 1024  # 15 MB
 
-    # Celery broker/backend for the OCR/NLP async pipeline.
-    redis_url: str = "redis://redis:6379/0"
-
     # "Seuil_1" from the design mockup — the NLP match score (0-100) above
     # which a tireur/tiré reconciliation counts as automatically confirmed.
     nlp_match_threshold: float = 95.0

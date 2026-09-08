@@ -5,7 +5,7 @@ tracée" (the design's own promise) is actually true instead of aspirational.
 
 ``user`` is the real authenticated username (from the request's JWT — see
 app/api/deps.py) for every API-triggered call site. The one exception is
-the Celery worker's own system-initiated actions (analysis
+the background analysis task's own system-initiated actions (analysis
 launched/succeeded/failed — see app/services/traite_processing.py), which
 hardcode "system" since there's no HTTP-authenticated caller in that
 context, not because authentication doesn't exist.

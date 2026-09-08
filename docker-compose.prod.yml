@@ -1,7 +1,7 @@
 # Production composition — built on the same `production` Dockerfile
 # targets validated in Sprint 7 (see BACKLOG.md). Differences from
 # docker-compose.yml (dev):
-#   - backend/worker/frontend build the `production` stage: no bind mounts,
+#   - backend/frontend build the `production` stage: no bind mounts,
 #     no --reload, no dev/test dependencies, non-root.
 #   - frontend is nginx serving the static build and reverse-proxying /api
 #     to backend (see front/nginx.conf) — same-origin, no CORS needed.
@@ -9,12 +9,14 @@
 #     security is a required env var with no fallback, so this refuses to
 #     start with the dev defaults by accident.
 #
-# postgres/redis are still included here so the stack is runnable
-# end-to-end as a reference/demo. A real deployment will very likely point
-# DATABASE_URL at the organization's actual managed database instead of
-# these — see README.md's "Production deployment" section. Authentication
-# is entirely local now (this app's own `users` table, see
-# app/services/local_auth.py) — no external directory dependency at all.
+# postgres is still included here so the stack is runnable end-to-end as a
+# reference/demo. A real deployment will very likely point DATABASE_URL at
+# the organization's actual managed database instead — see README.md's
+# "Production deployment" section. Authentication is entirely local now
+# (this app's own `users` table, see app/services/local_auth.py) — no
+# external directory dependency at all. OCR/extraction (Sprint 11) runs as
+# a FastAPI background task inside `backend` itself — there is no separate
+# worker process or message broker in this stack.
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,42 +33,16 @@ services:
       retries: 10
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
   backend:
     build:
       context: ./back
       target: production
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a real random value, not the dev default}
       ENVIRONMENT: production
       # Same-origin in production (see front/nginx.conf's reverse proxy) —
       # no cross-origin frontend, so no CORS_ALLOWED_ORIGINS needed here.
-    volumes:
-      - uploads_data:/app/uploads
-    depends_on:
-      postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
-    restart: unless-stopped
-
-  worker:
-    build:
-      context: ./back
-      target: production
-    command: celery -A app.worker worker --loglevel=info
-    environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: production
       # Real OCR/extraction (see app/services/vlm_extraction.py). Optional
       # — defaults to "stub" so a production deploy that hasn't made the
       # OCR vendor decision yet still starts cleanly.
@@ -79,7 +55,6 @@ services:
       - uploads_data:/app/uploads
     depends_on:
       postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
     restart: unless-stopped
 
   frontend:

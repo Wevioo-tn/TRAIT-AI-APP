@@ -1,6 +1,6 @@
 ---
 name: trait-ai-app-dev
-description: Run, rebuild, test, and troubleshoot the TRAIT-AI-APP stack (postgres, redis, backend, worker, frontend) — the concrete Docker Compose commands and the real gotchas already hit while building this project, not a generic Docker tutorial.
+description: Run, rebuild, test, and troubleshoot the TRAIT-AI-APP stack (postgres, backend, frontend) — the concrete Docker Compose commands and the real gotchas already hit while building this project, not a generic Docker tutorial.
 ---
 
 # Running TRAIT-AI-APP
@@ -12,9 +12,9 @@ Everything below assumes the working directory is `TRAIT-AI-APP/`.
 ## Everyday commands
 
 ```bash
-docker compose up -d          # postgres + redis + backend + worker + frontend
-docker compose ps             # confirm everyone is healthy
-docker compose logs -f worker # watch the Celery task / real OCR calls
+docker compose up -d           # postgres + backend + frontend
+docker compose ps              # confirm everyone is healthy
+docker compose logs -f backend # watch the background analysis task / real OCR calls
 make test                     # backend pytest, inside Docker, own test DB — run it TWICE, it must be stable both times
 make test-front                # frontend vitest
 make typecheck-front           # tsc -b
@@ -36,8 +36,8 @@ Editing `back/`/`front/` source hot-reloads automatically (bind-mounted,
 don't pick it up on their own:
 
 ```bash
-docker compose build backend worker      # or: frontend
-docker compose up -d                     # recreate with the new image
+docker compose build backend      # or: frontend
+docker compose up -d              # recreate with the new image
 ```
 
 ## Database migrations — dev vs test are two different databases
@@ -59,14 +59,13 @@ error right after adding a migration, this is almost certainly why.
 
 ## Known port conflicts on this machine
 
-Other unrelated local projects on this host sometimes already bind
-`8000` (a `gpt-researcher` container) or `6379` (Redis). Never touch
-someone else's container to free a port — remap this project's own port in
-`.env` instead (see `.env.example`'s comments):
+Other unrelated local projects on this host sometimes already bind `8000`
+(a `gpt-researcher` container). Never touch someone else's container to
+free a port — remap this project's own port in `.env` instead (see
+`.env.example`'s comments):
 
 ```
 BACKEND_PORT=8001   # frontend's VITE_API_BASE_URL follows this automatically
-REDIS_PORT=6380     # already the checked-in default for exactly this reason
 ```
 
 If `docker compose up -d` fails with `port is already allocated`, check
@@ -76,8 +75,8 @@ compose file is broken.
 ## Editing `docker-compose.yml`, `back/Dockerfile`, or `front/Dockerfile`
 
 Both Dockerfiles are **multi-stage** (`dev` / `production`, `front/` adds
-an intermediate `build` stage). `docker-compose.yml`'s `backend`/`worker`/
-`frontend` services pin `target: dev` explicitly — if that ever gets
+an intermediate `build` stage). `docker-compose.yml`'s `backend`/`frontend`
+services pin `target: dev` explicitly — if that ever gets
 removed, `docker compose build` silently picks the *last* stage
 (`production`: no `--reload`, no dev deps) and local dev breaks in a
 confusing way. Keep `target: dev` on every service build in the dev

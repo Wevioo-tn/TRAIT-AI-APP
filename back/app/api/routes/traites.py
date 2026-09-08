@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -42,7 +42,7 @@ from app.services.audit import log_action
 from app.services.mentions_rules import evaluate_date_rules, evaluate_mandatory_mentions, find_matching_invoice
 from app.services.storage import LocalFileStorage, get_storage
 from app.services.verification_rules import evaluate_verifications
-from app.tasks.traite_processing import launch_traite_analysis
+from app.tasks.traite_processing import run_traite_analysis
 
 router = APIRouter(prefix="/traites", tags=["traites"], dependencies=[Depends(get_current_user)])
 settings = get_settings()
@@ -400,6 +400,7 @@ async def create_decision(
 @router.post("/{traite_id}/analyse", response_model=TraiteRead, status_code=202)
 async def lancer_analyse(
     traite_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     current_user: str = Depends(get_current_user),
 ) -> Traite:
@@ -434,7 +435,7 @@ async def lancer_analyse(
     await session.commit()
     await session.refresh(traite)
 
-    launch_traite_analysis.delay(str(traite_id))
+    background_tasks.add_task(run_traite_analysis, str(traite_id))
 
     return traite
 

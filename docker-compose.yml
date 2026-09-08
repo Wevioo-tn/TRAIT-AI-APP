@@ -16,16 +16,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "${REDIS_PORT:-6380}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   backend:
     build:
       context: ./back
@@ -36,12 +26,21 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/${POSTGRES_DB:-trait_ai}
       DATABASE_URL_TEST: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/trait_ai_test
-      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
       # Kept in sync with FRONTEND_PORT below — if that's overridden in
       # .env without updating this too, the browser's CORS preflight will
       # fail again exactly like the bug this setting was added to fix.
       CORS_ALLOWED_ORIGINS: http://localhost:${FRONTEND_PORT:-5173},http://127.0.0.1:${FRONTEND_PORT:-5173}
+      # Real OCR/extraction (Sprint 8) — see app/services/vlm_extraction.py.
+      # Extraction runs as a FastAPI background task inside this same
+      # backend process (Sprint 11 — the separate Celery worker/Redis
+      # broker were dropped). Defaults to "stub" — opt in explicitly, never
+      # accidentally start billing/routing scans to a real provider.
+      OCR_PROVIDER: ${OCR_PROVIDER:-stub}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -52,36 +51,6 @@ services:
       - uploads_data:/app/uploads
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  worker:
-    build:
-      context: ./back
-      target: dev
-    command: celery -A app.worker worker --loglevel=info
-    environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/${POSTGRES_DB:-trait_ai}
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: development
-      # Real OCR/extraction (Sprint 8) — see app/services/vlm_extraction.py.
-      # Only the worker needs these: extraction runs inside the Celery
-      # task, never in the backend's request path. Defaults to "stub" —
-      # opt in explicitly, never accidentally start billing/routing scans
-      # to a real provider.
-      OCR_PROVIDER: ${OCR_PROVIDER:-stub}
-      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
-      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
-      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
-      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
-    volumes:
-      - ./back:/app
-      - uploads_data:/app/uploads
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   frontend:

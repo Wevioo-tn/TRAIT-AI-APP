@@ -14,7 +14,7 @@ RUN groupadd --system app && useradd --system --gid app --no-create-home app
 
 # ---- dev: what docker-compose.yml actually runs locally ---------------------
 # Bind-mounts the source tree and reloads on change (see docker-compose.yml's
-# `volumes:` for backend/worker) — stays root because the mounted files are
+# `volumes:` for backend) — stays root because the mounted files are
 # host-owned, not container-owned, and a non-root container user buys nothing
 # there while adding a real risk of permission errors against them.
 FROM base AS dev

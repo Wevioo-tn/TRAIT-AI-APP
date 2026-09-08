@@ -1,7 +1,7 @@
 """Sprint 4 — execute_analysis: the real orchestration logic, exercised
-directly against the test DB. No Celery, no HTTP — see test_analyse_endpoint.py
-for the API layer and test_extraction.py / test_nlp_matching.py for the pure
-building blocks this composes.
+directly against the test DB. No background task, no HTTP — see
+test_analyse_endpoint.py for the API layer and test_extraction.py /
+test_nlp_matching.py for the pure building blocks this composes.
 """
 from datetime import date
 from decimal import Decimal

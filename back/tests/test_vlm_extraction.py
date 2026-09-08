@@ -183,7 +183,17 @@ def test_extract_skips_the_model_call_for_non_image_content_type():
 
 
 def test_client_azure_openai_requires_full_configuration():
-    settings = Settings(ocr_provider="azure_openai")
+    # Explicit empty overrides, not just omission: since Sprint 11 the
+    # backend container (where tests also run) carries the real
+    # AZURE_OPENAI_* vars for the live pipeline, so relying on ambient env
+    # being unset would make this test's outcome depend on whatever's in
+    # .env rather than on the code under test.
+    settings = Settings(
+        ocr_provider="azure_openai",
+        azure_openai_endpoint="",
+        azure_openai_api_key="",
+        azure_openai_deployment="",
+    )
     with pytest.raises(RuntimeError, match="AZURE_OPENAI_ENDPOINT"):
         _client_azure_openai(settings)
 
@@ -201,7 +211,7 @@ def test_client_azure_openai_builds_client_when_configured():
 
 
 def test_get_extractor_defaults_to_stub(monkeypatch):
-    monkeypatch.setattr("app.services.vlm_extraction.get_settings", lambda: Settings())
+    monkeypatch.setattr("app.services.vlm_extraction.get_settings", lambda: Settings(ocr_provider="stub"))
     assert isinstance(get_extractor(), StubExtractor)
 
 

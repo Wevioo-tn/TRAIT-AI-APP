@@ -70,18 +70,23 @@ Two things worth knowing before touching related code:
   instruments has never been evaluated — only the plumbing (image in,
   structured data out) has been proven. Don't treat a clean synthetic-test
   run as an accuracy claim.
-- Three changes made after Sprint 9, not yet reflected in BACKLOG.md's own
-  sprint numbering, but real and tested: (1) `local_llm`/the bundled
-  `ollama` service were dropped entirely — `OCR_PROVIDER` is `stub`/
-  `azure_openai` only now. (2) The queue screen's intake form (N° L-CN/
-  montant/dates typed in before upload) was removed — a traite is created
-  from just the scans, with those fields server-generated as placeholders
-  then overwritten by `execute_analysis` once extraction agrees on real
-  values (`_promote_canonical_identity`). (3) Login moved off LDAP onto a
-  local `users` table (Argon2id via `app/services/password_hash.py`) —
+- Changes made after Sprint 9, not yet reflected in BACKLOG.md's own sprint
+  numbering, but real and tested: (1) `local_llm`/the bundled `ollama`
+  service were dropped entirely — `OCR_PROVIDER` is `stub`/`azure_openai`
+  only now. (2) The queue screen's intake form (N° L-CN/montant/dates typed
+  in before upload) was removed — a traite is created from just the scans,
+  with those fields server-generated as placeholders then overwritten by
+  `execute_analysis` once extraction agrees on real values
+  (`_promote_canonical_identity`). (3) Login moved off LDAP onto a local
+  `users` table (Argon2id via `app/services/password_hash.py`) —
   `make seed` (dev) or `scripts/create_user.py` (anywhere, including
   production) creates accounts now; nothing does it automatically the way
-  the old LDAP container's env vars did.
+  the old LDAP container's env vars did. (4) The separate `worker`
+  container and Celery+Redis broker were removed entirely (Sprint 11) —
+  the OCR/NLP pipeline now runs as a FastAPI `BackgroundTasks` job inside
+  `backend` itself. See `back/app/tasks/traite_processing.py`'s docstring
+  for the accepted tradeoff (a running task is lost if `backend` restarts
+  mid-analysis) and why it was accepted.
 
 Unscheduled backlog items (RIB checksum validation, accent normalization
 for NLP matching, adherent/debiteur party unification) are listed at the

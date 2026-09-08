@@ -21,7 +21,7 @@ discipline and `BACKLOG.md` conventions this project has followed).
 | Backend   | FastAPI + SQLAlchemy 2.0 + Alembic          | Pydantic models map directly onto the domain's validation rules (mentions obligatoires, RIB structure, date rules). Python also has the strongest OCR/NLP ecosystem, which the next phases depend on. |
 | Database  | PostgreSQL                                  | Generated columns, native enums, JSONB for the audit log, schemas for logical separation. |
 | Driver    | `psycopg` (v3)                              | One driver for both the async app engine and Alembic's sync engine — no asyncpg/psycopg2 split. |
-| Async pipeline | Celery + Redis                         | The OCR/NLP analysis runs as a background job, not inline in a request — matches the design's own "processing" state instead of blocking the API on it. |
+| Async pipeline | FastAPI `BackgroundTasks`              | The OCR/NLP analysis runs as a background job inside the `backend` process, not inline in a request — matches the design's own "processing" state instead of blocking the API on it. No separate worker process or broker (Celery + Redis, used through Sprint 9, were dropped in Sprint 11 for simplicity — see BACKLOG.md). |
 
 Everything runs in Docker. There is no supported "run it directly on the
 host" path — `front/` and `back/` are each built and run as containers,
@@ -29,9 +29,10 @@ orchestrated by the root `docker-compose.yml`.
 
 ### OCR/extraction: a real VLM, chosen at deploy time, not baked into the code
 
-The async pipeline (Celery, the state machine, the NLP fuzzy-matching
-algorithm) is fully real and tested — and as of Sprint 8, so is extraction
-itself, via a vision-capable LLM behind the same `Extractor` interface
+The async pipeline (the background task, the state machine, the NLP
+fuzzy-matching algorithm) is fully real and tested — and as of Sprint 8, so
+is extraction itself, via a vision-capable LLM behind the same `Extractor`
+interface
 `StubExtractor` (`app/services/extraction.py`) has always implemented:
 
 ```python
@@ -156,7 +157,7 @@ since curl doesn't enforce it. Only a real browser check caught it.
 ```bash
 cp .env.example .env      # optional — every value already has a safe default
 make build
-make up                   # postgres + redis + backend (:8000) + worker + frontend (:5173)
+make up                   # postgres + backend (:8000) + frontend (:5173)
 ```
 
 In another terminal, once postgres is healthy:
@@ -178,7 +179,7 @@ Then open:
 By default, launching an analysis uses `StubExtractor` (`OCR_PROVIDER=stub`
 — see above). To try real extraction, set `OCR_PROVIDER=azure_openai` and
 the real tenant credentials in `.env` (`AZURE_OPENAI_*`) — see
-`.env.example` — then restart the `worker` service.
+`.env.example` — then restart the `backend` service.
 
 ## Project layout
 
@@ -197,8 +198,7 @@ TRAIT-AI-APP/
 │   │   ├── api/routes/auth.py   # POST /auth/login (local users table → JWT)
 │   │   ├── api/deps.py          # get_current_user — the Bearer-token dependency
 │   │   ├── schemas/traite.py    # Pydantic request/response models
-│   │   ├── worker.py            # Celery app instance
-│   │   ├── tasks/traite_processing.py  # the Celery task (callable directly for tests)
+│   │   ├── tasks/traite_processing.py  # wraps execute_analysis as a FastAPI BackgroundTasks job
 │   │   ├── services/
 │   │   │   ├── local_auth.py           # local username/password check against `users`
 │   │   │   ├── password_hash.py        # Argon2id hashing (never a plain-text password)
@@ -349,7 +349,8 @@ would be wrong to insert — see `.env.prod.example`.
 - `test_nombres.py` — French number-to-words, including the classic
   irregularities (70s/80s/90s, cent/mille/million (in)variability).
 - `test_extraction.py` / `test_nlp_matching.py` — the two pure building
-  blocks of the analysis pipeline, independent of the DB or Celery.
+  blocks of the analysis pipeline, independent of the DB or the background
+  task.
 - `test_vlm_extraction.py` — the real (Sprint 8) extraction path: JSON
   response parsing (raw/fenced/prose-wrapped/unparseable), the full
   fields/parties mapping and the PDF-skip path against a dependency-
@@ -363,15 +364,16 @@ would be wrong to insert — see `.env.prod.example`.
   guarantee proven against an actual foreign-key violation.
 - `test_traite_processing.py` — `executer_analyse` exercised directly
   against the test DB (real files on disk, real seeded referential rows) —
-  no Celery involved.
-- `test_celery_task.py` — proves the task *wrapper* itself works (its own
-  engine creation, the `SYNC_DATABASE_URL_OVERRIDE` env var, its commit) by
-  calling it directly rather than via `.delay()` — no broker needed to test
-  a task's logic, only to actually dispatch one.
+  no background task involved.
+- `test_traite_analysis_task.py` — proves the background-task *wrapper*
+  itself works (its own engine creation, the `SYNC_DATABASE_URL_OVERRIDE`
+  env var, its commit) by calling it directly rather than through
+  `BackgroundTasks.add_task` — no running app needed to test its logic,
+  only to actually dispatch it.
 - `test_analyse_endpoint.py` — `POST .../analyse` and `GET .../status`,
-  with `.delay()` monkeypatched to a spy (proving the API's own validation
-  and state transitions, not Redis connectivity — that's validated live,
-  see BACKLOG.md's Sprint 4 notes).
+  with `run_traite_analysis` monkeypatched to a spy (proving the API's own
+  validation and state transitions, not the real extraction pipeline —
+  that's validated live, see BACKLOG.md's Sprint 4/11 notes).
 - `test_mentions_rules.py` — pure unit tests for the mentions-obligatoires
   and date-rule logic; date-based tests use offsets from `date.today()`,
   not hardcoded absolute dates (a fixed date silently drifts into the past
@@ -416,9 +418,8 @@ credentials. `docker-compose.prod.yml` is the production composition —
 built from the same `back/Dockerfile`/`front/Dockerfile`'s `production`
 stage:
 
-- **Backend/worker**: only `requirements.txt` installed (no
-  pytest/ruff/httpx), no bind mount, runs as a non-root `app` user, no
-  `--reload`.
+- **Backend**: only `requirements.txt` installed (no pytest/ruff/httpx), no
+  bind mount, runs as a non-root `app` user, no `--reload`.
 - **Frontend**: Vite builds the static SPA, then `nginxinc/nginx-unprivileged`
   (non-root by construction) serves it and reverse-proxies `/api/*` to the
   backend (`front/nginx.conf`) — the browser only ever talks to one origin,
@@ -436,13 +437,15 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend 
 docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend python -m scripts.create_user <username> <password>
 ```
 
-`postgres`/`redis` are included so this is runnable end-to-end as a
-reference — a real deployment will very likely point `DATABASE_URL` at the
+`postgres` is included so this is runnable end-to-end as a reference — a
+real deployment will very likely point `DATABASE_URL` at the
 organization's actual managed database instead of this bundled one, and
 put a TLS-terminating load balancer in front of the `frontend` container
 rather than exposing its port directly. Login is entirely local now (this
 app's own `users` table) — no external directory dependency to point
-anywhere.
+anywhere. There is no separate worker process or message broker — the
+OCR/NLP pipeline runs as a FastAPI background task inside `backend` itself
+(Sprint 11).
 
 Validated by actually building and running this composition (not just
 reading it): `alembic upgrade head` against a fresh production database,

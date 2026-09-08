@@ -1,13 +1,12 @@
 """OCR/extraction accuracy pilot — runs one or more real bilingual FR/AR
-traite scans through the actual running pipeline (real backend API, real
-Celery worker, whichever OCR_PROVIDER the worker is currently configured
-for) and reports field-by-field accuracy against manually-supplied ground
-truth.
+traite scans through the actual running pipeline (real backend API,
+whichever OCR_PROVIDER the backend is currently configured for) and
+reports field-by-field accuracy against manually-supplied ground truth.
 
 This is deliberately NOT a unit test: it hits the real, running `backend`
-and `worker` containers over HTTP, exactly the path a real user's browser
-takes, per this project's own validation discipline (BACKLOG.md — a clean
-run against a synthetic/mocked path proves the plumbing, never accuracy).
+container over HTTP, exactly the path a real user's browser takes, per
+this project's own validation discipline (BACKLOG.md — a clean run
+against a synthetic/mocked path proves the plumbing, never accuracy).
 
 Usage (from the host):
     docker compose exec backend python scripts/accuracy_pilot.py pilot_samples/manifest.json

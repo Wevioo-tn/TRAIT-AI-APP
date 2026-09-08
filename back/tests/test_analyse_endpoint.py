@@ -1,10 +1,16 @@
 """Sprint 4 — POST .../analyse and GET .../status.
 
-The Celery dispatch itself (.delay()) is monkeypatched to a spy: these
-tests are about the API's own validation and state transition, not about
-proving Celery can reach Redis (that's covered live in Docker, and the task
-body itself is covered by test_celery_task.py / test_traite_processing.py
-without needing a broker at all).
+The background task dispatch itself (``BackgroundTasks.add_task``) is
+monkeypatched to a spy: these tests are about the API's own validation and
+state transition, not about proving the real extraction pipeline runs
+(that's covered live in Docker, and the task body itself is covered by
+test_traite_analysis_task.py / test_traite_processing.py directly).
+
+Starlette's ``BackgroundTasks`` run via ``run_in_threadpool`` as part of
+the same ASGI call — with the ``ASGITransport``-backed ``client`` fixture
+used here (no real network hop), the background task has already run by
+the time ``await client.post(...)`` returns, so the spy's `calls` list is
+safe to assert on immediately after.
 """
 import app.api.routes.traites as traites_routes
 
@@ -30,14 +36,14 @@ async def _upload_both_faces(client, traite_id: str) -> None:
         )
 
 
-def _spy_delay(monkeypatch):
+def _spy_run_traite_analysis(monkeypatch):
     calls: list[str] = []
-    monkeypatch.setattr(traites_routes.launch_traite_analysis, "delay", lambda traite_id: calls.append(traite_id))
+    monkeypatch.setattr(traites_routes, "run_traite_analysis", lambda traite_id: calls.append(traite_id))
     return calls
 
 
 async def test_analyse_requires_both_faces(client, monkeypatch):
-    _spy_delay(monkeypatch)
+    _spy_run_traite_analysis(monkeypatch)
     traite_id = await _create_traite(client)
 
     response = await client.post(f"/api/traites/{traite_id}/analyse")
@@ -46,7 +52,7 @@ async def test_analyse_requires_both_faces(client, monkeypatch):
 
 
 async def test_analyse_succeeds_with_both_faces_and_dispatches_task(client, monkeypatch):
-    calls = _spy_delay(monkeypatch)
+    calls = _spy_run_traite_analysis(monkeypatch)
     traite_id = await _create_traite(client)
     await _upload_both_faces(client, traite_id)
 
@@ -57,7 +63,7 @@ async def test_analyse_succeeds_with_both_faces_and_dispatches_task(client, monk
 
 
 async def test_analyse_rejects_relaunch_once_already_running(client, monkeypatch):
-    _spy_delay(monkeypatch)
+    _spy_run_traite_analysis(monkeypatch)
     traite_id = await _create_traite(client)
     await _upload_both_faces(client, traite_id)
     await client.post(f"/api/traites/{traite_id}/analyse")
@@ -67,13 +73,13 @@ async def test_analyse_rejects_relaunch_once_already_running(client, monkeypatch
 
 
 async def test_analyse_unknown_traite_returns_404(client, monkeypatch):
-    _spy_delay(monkeypatch)
+    _spy_run_traite_analysis(monkeypatch)
     response = await client.post("/api/traites/00000000-0000-0000-0000-000000000000/analyse")
     assert response.status_code == 404
 
 
 async def test_status_reflects_en_cours_after_launch(client, monkeypatch):
-    _spy_delay(monkeypatch)
+    _spy_run_traite_analysis(monkeypatch)
     traite_id = await _create_traite(client)
 
     before = await client.get(f"/api/traites/{traite_id}/status")
