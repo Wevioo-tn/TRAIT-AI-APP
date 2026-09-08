@@ -30,6 +30,7 @@ from app.services.extraction import (
     CHAMP_DATE_CREATION,
     CHAMP_ECHEANCE,
     CHAMP_MONTANT_CHIFFRES,
+    CHAMP_MONTANT_LETTRES,
     CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
@@ -42,6 +43,7 @@ from app.services.extraction import (
 )
 from app.services.traite_processing import (
     _canonicalize_rib,
+    _normalize_montant_lettres,
     _parse_date,
     _parse_montant,
     execute_analysis,
@@ -612,3 +614,110 @@ class TestParseHelpers:
     def test_reconstruct_rib_missing_segment_returns_none(self):
         assert reconstruct_rib("11", "003", None, "36") is None
         assert reconstruct_rib(None, None, None, None) is None
+
+    def test_normalize_montant_lettres_case_insensitive(self):
+        assert _normalize_montant_lettres("HUIT MILLE DINARS") == _normalize_montant_lettres("huit mille dinars")
+
+    def test_normalize_montant_lettres_hyphen_vs_space(self):
+        assert _normalize_montant_lettres("dix-sept") == _normalize_montant_lettres("dix sept")
+
+    def test_normalize_montant_lettres_comma_present_or_absent(self):
+        with_comma = "Huit mille cent dix-sept dinars, 504 millimes"
+        without_comma = "huit mille cent dix sept dinars 504 millimes"
+        assert _normalize_montant_lettres(with_comma) == _normalize_montant_lettres(without_comma)
+
+    def test_normalize_montant_lettres_collapses_multiple_spaces(self):
+        assert _normalize_montant_lettres("huit   mille  cent") == _normalize_montant_lettres("huit mille cent")
+
+
+class TestMontantLettresVsChiffres:
+    """montant_chiffres and montant_lettres each already get their own
+    internal (occurrence 1 vs 2) coherence check — this cross-checks one
+    against the other, per the spec's "conversion numérique -> cohérence
+    stricte avec montant en chiffres" requirement."""
+
+    def _rib_fields(self) -> list[FieldCandidate]:
+        return [FieldCandidate(CHAMP_RIB_TIRE, 1, RIB_DEB_1001), FieldCandidate(CHAMP_RIB_TIRE, 2, RIB_DEB_1001)]
+
+    def _incoherences_from_audit(self, session, traite_id) -> list[str]:
+        entry = session.scalar(
+            select(AuditLogEntry).where(AuditLogEntry.traite_id == traite_id, AuditLogEntry.action == "analyse_terminee")
+        )
+        return entry.details["incoherences"]
+
+    def test_concordant_montants_add_no_inconsistency_and_do_not_block_an_otherwise_clean_match(
+        self, db_session, tmp_path
+    ):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                *self._rib_fields(),
+                *_pair(CHAMP_MONTANT_CHIFFRES, "2520.000"),
+                *_pair(CHAMP_MONTANT_LETTRES, "Deux mille cinq cent vingt dinars"),
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert "montant_lettres_vs_chiffres" not in self._incoherences_from_audit(db_session, traite.id)
+        assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+
+    def test_discordant_montants_flag_inconsistency_and_block_auto_confirm(self, db_session, tmp_path):
+        """Even a RIB that matches cleanly must not auto-confirm past a
+        montant_lettres that doesn't actually spell out montant_chiffres."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                *self._rib_fields(),
+                *_pair(CHAMP_MONTANT_CHIFFRES, "2520.000"),
+                *_pair(CHAMP_MONTANT_LETTRES, "Trois mille dinars"),
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert "montant_lettres_vs_chiffres" in self._incoherences_from_audit(db_session, traite.id)
+        assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+
+    def test_internally_incoherent_montant_lettres_skips_cross_check(self, db_session, tmp_path):
+        """One side already disagreeing with itself (its own 2 occurrences)
+        is its own écart — no cross-check attempted on top, no false
+        positive stacked onto an already-flagged field."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                *_pair(CHAMP_MONTANT_CHIFFRES, "2520.000"),
+                FieldCandidate(CHAMP_MONTANT_LETTRES, 1, "Deux mille cinq cent vingt dinars"),
+                FieldCandidate(CHAMP_MONTANT_LETTRES, 2, "Trois mille dinars"),  # disagrees with its own occurrence 1
+            ],
+        )
+        execute_analysis(traite.id, db_session, extractor)
+
+        incoherences = self._incoherences_from_audit(db_session, traite.id)
+        assert "montant_lettres_vs_chiffres" not in incoherences
+        assert CHAMP_MONTANT_LETTRES in incoherences  # the field's own occurrence mismatch is still flagged
+
+    def test_stub_extractor_real_fixture_has_no_montant_cross_check_regression(self, db_session, tmp_path):
+        """StubExtractor always derives montant_lettres from the traite's
+        own montant via the real amount_to_words (montant=8117.504 ->
+        "Huit mille cent dix-sept dinars, 504 millimes", see
+        test_known_fields_land_in_champs_extraits_correctly) — proven here
+        to never trip the new cross-check."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        execute_analysis(traite.id, db_session, StubExtractor())
+
+        assert "montant_lettres_vs_chiffres" not in self._incoherences_from_audit(db_session, traite.id)

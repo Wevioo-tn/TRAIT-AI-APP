@@ -37,6 +37,7 @@ from app.services.extraction import (
     CHAMP_DATE_CREATION,
     CHAMP_ECHEANCE,
     CHAMP_MONTANT_CHIFFRES,
+    CHAMP_MONTANT_LETTRES,
     CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
@@ -46,6 +47,7 @@ from app.services.extraction import (
     Extractor,
 )
 from app.services.nlp_matching import best_match, match_debiteur_by_rib
+from app.services.nombres import amount_to_words
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,21 @@ def _coherent(values: list[str | None]) -> str | None:
     if len(values) != 2 or values[0] != values[1] or values[0] is None:
         return None
     return values[0]
+
+
+_INCOHERENCE_MONTANT_LETTRES = "montant_lettres_vs_chiffres"
+
+
+def _normalize_montant_lettres(text: str) -> str:
+    """Casefolds and strips punctuation noise (hyphens, commas) so an
+    OCR'd "huit mille cent dix sept dinars 504 millimes" and
+    amount_to_words's own canonical "Huit mille cent dix-sept dinars, 504
+    millimes" compare equal when the underlying number actually is — case,
+    whether a compound number is hyphenated, and the comma before
+    "millimes" are formatting, not a real discrepancy worth flagging."""
+    normalized = text.casefold()
+    normalized = re.sub(r"[-,]", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _coherent_rib_part(by_field: dict[str, list[str | None]], field_name: str) -> str | None:
@@ -263,6 +280,26 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
     inconsistencies = sorted(name for name, values in by_field.items() if len(set(values)) > 1)
 
     _promote_canonical_identity(traite, by_field, session)
+
+    # Cross-check montant_chiffres against montant_lettres — today each is
+    # only checked for its own internal coherence (2 OCR occurrences
+    # agreeing), never against each other, despite the spec's own
+    # "conversion numérique -> cohérence stricte avec montant en chiffres"
+    # requirement. Only attempted once each side is individually coherent
+    # (otherwise there's nothing reliable to compare — already flagged by
+    # the mechanism above); a disagreement joins the same inconsistencies
+    # list as every other duplicated-field écart, not a parallel mechanism.
+    montant_chiffres_coherent = _coherent(by_field.get(CHAMP_MONTANT_CHIFFRES, []))
+    montant_lettres_coherent = _coherent(by_field.get(CHAMP_MONTANT_LETTRES, []))
+    if montant_chiffres_coherent is not None and montant_lettres_coherent is not None:
+        montant_parsed = _parse_montant(montant_chiffres_coherent)
+        if montant_parsed is not None:
+            montant_attendu_en_lettres = amount_to_words(montant_parsed)
+            if _normalize_montant_lettres(montant_attendu_en_lettres) != _normalize_montant_lettres(
+                montant_lettres_coherent
+            ):
+                inconsistencies.append(_INCOHERENCE_MONTANT_LETTRES)
+                inconsistencies.sort()
 
     drawer_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIREUR), None)
     drawee_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIRE), None)
