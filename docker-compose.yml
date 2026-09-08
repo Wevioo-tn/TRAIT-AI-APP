@@ -103,11 +103,6 @@ services:
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
       AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
-      # Defaults point at the bundled `ollama` service below — override to
-      # point at any other OpenAI-Chat-Completions-compatible server.
-      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://ollama:11434/v1}
-      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-llava}
-      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-not-needed}
     volumes:
       - ./back:/app
       - uploads_data:/app/uploads
@@ -116,18 +111,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-  # Real, local OpenAI-compatible vision model server — the "local_llm"
-  # OCR_PROVIDER path (see app/services/vlm_extraction.py). Harmless to
-  # leave running even when unused: the worker only ever reaches out to it
-  # once OCR_PROVIDER=local_llm is actually set. No model is pulled
-  # automatically — run `make ollama-pull` once after first `up`.
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - "${OLLAMA_PORT:-11434}:11434"
 
   frontend:
     build:
@@ -146,4 +129,3 @@ services:
 volumes:
   postgres_data:
   uploads_data:
-  ollama_data:

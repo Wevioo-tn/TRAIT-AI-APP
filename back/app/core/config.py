@@ -68,24 +68,15 @@ class Settings(BaseSettings):
 
     # Real OCR/extraction (Sprint 8) — a vision-capable LLM behind the same
     # Extractor seam StubExtractor has always implemented (see
-    # app/services/extraction.py). Which provider actually runs is a
-    # deployment/compliance decision, not a code change: "azure_openai"
-    # sends scans to Azure, "local_llm" never lets them leave the network.
-    # Defaults to "stub" — a misconfigured or unset provider must never
-    # silently start making real (and possibly billed) external calls.
+    # app/services/extraction.py). Defaults to "stub" — a misconfigured or
+    # unset provider must never silently start making real (and possibly
+    # billed) external calls.
     ocr_provider: str = "stub"
 
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
     azure_openai_deployment: str = ""
     azure_openai_api_version: str = "2024-08-01-preview"
-
-    # Any OpenAI-Chat-Completions-compatible server (Ollama, vLLM, LM
-    # Studio, llama.cpp server, ...) reached over the network — including,
-    # for local dev/CI, the bundled `ollama` docker-compose service.
-    local_llm_base_url: str = "http://ollama:11434/v1"
-    local_llm_model: str = "llava"
-    local_llm_api_key: str = "not-needed"
 
 
 @lru_cache

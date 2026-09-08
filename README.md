@@ -47,36 +47,32 @@ residency/compliance decision, not a code change:
 - `stub` (default) — `StubExtractor`, no real image reading at all. An
   unconfigured deployment must never silently start making real,
   possibly-billed external calls.
-- `azure_openai` — Azure OpenAI's vision-capable chat model.
-- `local_llm` — any OpenAI-Chat-Completions-compatible server (the bundled
-  dev `ollama` service, or your own Ollama/vLLM/LM Studio/llama.cpp
-  instance) — scans never leave the network.
+- `azure_openai` — Azure OpenAI's vision-capable chat model. The only real
+  provider (per your call — a local/self-hosted option was evaluated and
+  removed to keep this simple).
 
-Both real providers share one implementation (`VlmExtractor`) since Azure
-OpenAI and a local OpenAI-compatible server speak the identical Chat
-Completions API — only how the client is constructed differs. It sends the
-recto and verso as base64 images alongside a prompt asking for both
-physical occurrences of each duplicated field (this instrument type
-repeats numero_lcn/montant/dates/RIB/lieu for a manual cross-check — see
-"Contrôle de cohérence des champs dupliqués" below) plus the free-text
-tireur/tiré/ordre names used for NLP matching, as strict JSON.
+`VlmExtractor` sends the recto and verso as base64 images alongside a
+prompt asking for both physical occurrences of each duplicated field
+(this instrument type repeats numero_lcn/montant/dates/RIB/lieu for a
+manual cross-check — see "Contrôle de cohérence des champs dupliqués"
+below) plus the free-text tireur/tiré/ordre names used for NLP matching,
+as strict JSON.
 
 A real model can also just fail to follow the "respond only with JSON"
-instruction — found live against a real (small, general-purpose) local
-model, not hypothesized. `execute_analysis` treats any extraction failure
-as an honest `ECARTS_A_TRAITER` outcome with the real error recorded in
-the audit log (`analyse_echouee`), the same way a low-confidence NLP match
-already does — never a traite stuck in `EN_COURS_OCR` forever with no
-signal for a human to act on.
+instruction — found live against a real (small, general-purpose) model
+during this app's Sprint 8 evaluation, not hypothesized. `execute_analysis`
+treats any extraction failure as an honest `ECARTS_A_TRAITER` outcome with
+the real error recorded in the audit log (`analyse_echouee`), the same way
+a low-confidence NLP match already does — never a traite stuck in
+`EN_COURS_OCR` forever with no signal for a human to act on.
 
 **What Sprint 8 proves and doesn't**: the plumbing — image bytes in,
-structured fields out, either provider swappable by one env var, PDF faces
-handled by honestly reporting absence rather than crashing (vision chat
-APIs take images, not PDFs), extraction failures resolved instead of
-hanging. It does **not** prove extraction *accuracy* on a real bilingual
-FR/AR bank instrument — that needs an actual accuracy pilot against real
-sample scans, tracked in BACKLOG.md, deliberately kept separate from "does
-the architecture work."
+structured fields out, PDF faces handled by honestly reporting absence
+rather than crashing (vision chat APIs take images, not PDFs), extraction
+failures resolved instead of hanging. It does **not** prove extraction
+*accuracy* on a real bilingual FR/AR bank instrument — that needs an
+actual accuracy pilot against real sample scans, tracked in BACKLOG.md,
+deliberately kept separate from "does the architecture work."
 
 ### Raw extraction audit log — the one table that isn't SQLAlchemy
 
@@ -157,7 +153,7 @@ since curl doesn't enforce it. Only a real browser check caught it.
 ```bash
 cp .env.example .env      # optional — every value already has a safe default
 make build
-make up                   # postgres + redis + ldap + ollama + backend (:8000) + worker + frontend (:5173)
+make up                   # postgres + redis + ldap + backend (:8000) + worker + frontend (:5173)
 ```
 
 In another terminal, once postgres is healthy:
@@ -177,10 +173,9 @@ Then open:
 - Backend interactive docs: http://localhost:8000/docs
 
 By default, launching an analysis uses `StubExtractor` (`OCR_PROVIDER=stub`
-— see above). To try real extraction locally without any external
-credentials: `make ollama-pull` once, then set `OCR_PROVIDER=local_llm` in
-`.env` and restart the `worker` service. Azure OpenAI needs real tenant
-credentials in `.env` (`AZURE_OPENAI_*`) instead — see `.env.example`.
+— see above). To try real extraction, set `OCR_PROVIDER=azure_openai` and
+the real tenant credentials in `.env` (`AZURE_OPENAI_*`) — see
+`.env.example` — then restart the `worker` service.
 
 ## Project layout
 
@@ -338,10 +333,8 @@ pipeline, not faked ahead of time:
 - `test_vlm_extraction.py` — the real (Sprint 8) extraction path: JSON
   response parsing (raw/fenced/prose-wrapped/unparseable), the full
   fields/parties mapping and the PDF-skip path against a dependency-
-  injected fake client, and both providers' `OCR_PROVIDER` dispatch —
-  never a real, billed Azure OpenAI call in the suite. The `local_llm`
-  path is instead validated live against the real `ollama` service (see
-  BACKLOG.md's Sprint 8 notes).
+  injected fake client, and `OCR_PROVIDER` dispatch — never a real,
+  billed Azure OpenAI call in the suite.
 - `test_extraction_log.py` — the raw-`psycopg` audit log (Sprint 9)
   exercised against the **real** test database, not mocked (unlike
   `test_vlm_extraction.py`, which mocks this module at the boundary): a

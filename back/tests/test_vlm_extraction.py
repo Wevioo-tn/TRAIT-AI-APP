@@ -1,8 +1,8 @@
-"""Sprint 8 — real OCR/extraction via a vision-capable LLM.
+"""Sprint 8 — real OCR/extraction via Azure OpenAI's vision-capable chat
+model.
 
-Pure unit tests, no network: the OpenAI/Azure clients are dependency-
-injected fakes, never the real SDK talking to a real service (that's the
-`ollama` service's job — see the live validation notes in BACKLOG.md).
+Pure unit tests, no network: the Azure OpenAI client is a dependency-
+injected fake, never the real SDK talking to a real service.
 """
 from dataclasses import dataclass
 from datetime import date
@@ -25,7 +25,6 @@ from app.services.extraction import (
 from app.services.vlm_extraction import (
     VlmExtractor,
     _client_azure_openai,
-    _client_local_llm,
     _parse_json_response,
     get_extractor,
 )
@@ -94,7 +93,7 @@ def test_parse_json_response_raises_clearly_when_no_object_found():
 
 def test_extract_maps_both_occurrences_and_parties(monkeypatch):
     # record_extraction (raw psycopg, see extraction_log.py) is a real
-    # I/O boundary — mocked here the same way the OpenAI client already is,
+    # I/O boundary — mocked here the same way the Azure client already is,
     # so this stays a pure unit test. It's exercised for real against the
     # test database in test_extraction_log.py instead.
     log = []
@@ -116,7 +115,7 @@ def test_extract_maps_both_occurrences_and_parties(monkeypatch):
       "ordre_texte": "SPG"
     }"""
     client = _FakeClient(response_text)
-    extractor = VlmExtractor(client, "test-model", provider="local_llm")
+    extractor = VlmExtractor(client, "test-model")
 
     result = extractor.extract(_traite_with_documents(), b"recto-bytes", b"verso-bytes")
 
@@ -139,7 +138,7 @@ def test_extract_maps_both_occurrences_and_parties(monkeypatch):
     # entry with the real raw response — not just the parsed result.
     assert len(log) == 1
     assert log[0]["success"] is True
-    assert log[0]["provider"] == "local_llm"
+    assert log[0]["provider"] == "azure_openai"
     assert log[0]["raw_response"] == response_text
 
 
@@ -155,7 +154,7 @@ def test_extract_logs_the_failed_attempt_with_the_real_raw_response(monkeypatch)
     )
     off_topic_response = "The image features a gray and brown striped pattern."
     client = _FakeClient(off_topic_response)
-    extractor = VlmExtractor(client, "moondream", provider="local_llm")
+    extractor = VlmExtractor(client, "gpt-4o-vision")
 
     with pytest.raises(ValueError, match="ne contient pas d'objet JSON"):
         extractor.extract(_traite_with_documents(), b"recto-bytes", b"verso-bytes")
@@ -171,7 +170,7 @@ def test_extract_skips_the_model_call_for_non_image_content_type():
     one isn't implemented — must report absence, not send un-decodable
     bytes to the model or crash the analysis pipeline."""
     client = _FakeClient('{"numero_lcn": {}}')
-    extractor = VlmExtractor(client, "test-model", provider="local_llm")
+    extractor = VlmExtractor(client, "test-model")
 
     result = extractor.extract(_traite_with_documents(recto_ct="application/pdf"), b"%PDF-1.4", b"verso-bytes")
 
@@ -201,25 +200,22 @@ def test_client_azure_openai_builds_client_when_configured():
     assert client is not None
 
 
-def test_client_local_llm_builds_client_pointed_at_configured_url():
-    settings = Settings(local_llm_base_url="http://ollama:11434/v1", local_llm_model="llava")
-    client, model = _client_local_llm(settings)
-    assert model == "llava"
-    assert str(client.base_url).rstrip("/") == "http://ollama:11434/v1"
-
-
 def test_get_extractor_defaults_to_stub(monkeypatch):
     monkeypatch.setattr("app.services.vlm_extraction.get_settings", lambda: Settings())
     assert isinstance(get_extractor(), StubExtractor)
 
 
-def test_get_extractor_dispatches_to_local_llm(monkeypatch):
-    settings = Settings(ocr_provider="local_llm", local_llm_model="llava")
+def test_get_extractor_dispatches_to_azure_openai(monkeypatch):
+    settings = Settings(
+        ocr_provider="azure_openai",
+        azure_openai_endpoint="https://example.openai.azure.com",
+        azure_openai_api_key="secret",
+        azure_openai_deployment="gpt-4o-vision",
+    )
     monkeypatch.setattr("app.services.vlm_extraction.get_settings", lambda: settings)
     extractor = get_extractor()
     assert isinstance(extractor, VlmExtractor)
-    assert extractor._model == "llava"
-    assert extractor._provider == "local_llm"
+    assert extractor._model == "gpt-4o-vision"
 
 
 def test_get_extractor_rejects_unknown_provider(monkeypatch):

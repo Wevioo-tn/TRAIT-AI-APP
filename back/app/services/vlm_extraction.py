@@ -1,16 +1,12 @@
-"""Real OCR/extraction backed by a vision-capable LLM (VLM) — either Azure
-OpenAI or any OpenAI-Chat-Completions-compatible local server (Ollama,
-vLLM, LM Studio, llama.cpp server, ...), selected at deploy time by the
-``OCR_PROVIDER`` env var (see app/core/config.py). Which one actually runs
-is a data-residency/compliance decision, not a code change: both speak the
-same Chat Completions API, so this module shares one implementation
-(``VlmExtractor``) and only the client construction differs per provider.
+"""Real OCR/extraction backed by Azure OpenAI's vision-capable chat model,
+selected at deploy time by the ``OCR_PROVIDER`` env var (see
+app/core/config.py).
 
 This is a real implementation of the ``Extractor`` interface defined in
 extraction.py; that module (and its ``StubExtractor``) has no dependency
 on the ``openai`` package, so importing it never requires network
 credentials — only importing *this* module, or calling ``get_extractor()``
-with a real provider configured, does.
+with ``OCR_PROVIDER=azure_openai`` configured, does.
 """
 import base64
 import json
@@ -18,7 +14,7 @@ import logging
 import re
 from typing import Any
 
-from openai import AzureOpenAI, OpenAI
+from openai import AzureOpenAI
 
 from app.core.config import Settings, get_settings
 from app.db.models.traite import Face, Traite
@@ -110,15 +106,11 @@ def _content_type_for(traite: Traite, face: Face) -> str | None:
 
 
 class VlmExtractor:
-    """Shared logic for any OpenAI-Chat-Completions-compatible vision
-    model. Azure OpenAI and a local OpenAI-compatible server both accept
-    this exact request shape — only how ``client`` was constructed differs
-    (see ``get_extractor`` below)."""
+    """Real extraction via Azure OpenAI's Chat Completions API."""
 
-    def __init__(self, client: OpenAI | AzureOpenAI, model: str, provider: str) -> None:
+    def __init__(self, client: AzureOpenAI, model: str) -> None:
         self._client = client
         self._model = model
-        self._provider = provider
 
     def extract(self, traite: Traite, recto: bytes, verso: bytes) -> ExtractionResult:
         recto_content_type = _content_type_for(traite, Face.RECTO)
@@ -145,7 +137,7 @@ class VlmExtractor:
         stopwatch = Stopwatch()
         content: str | None = None
         try:
-            print(f"VLM extraction for traite {traite.id} using provider {self._provider} and model {self._model}")
+            print(f"VLM extraction for traite {traite.id} using provider azure_openai and model {self._model}")
             message_content = [
                 {"type": "text", "text": _PROMPT},
                 {"type": "text", "text": "Recto :"},
@@ -182,7 +174,7 @@ class VlmExtractor:
             # failure handling (statut -> ECARTS_A_TRAITER) still applies.
             record_extraction(
                 traite_id=traite.id,
-                provider=self._provider,
+                provider="azure_openai",
                 model=self._model,
                 success=False,
                 raw_response=content,
@@ -193,7 +185,7 @@ class VlmExtractor:
 
         record_extraction(
             traite_id=traite.id,
-            provider=self._provider,
+            provider="azure_openai",
             model=self._model,
             success=True,
             raw_response=content,
@@ -229,11 +221,6 @@ def _client_azure_openai(settings: Settings) -> tuple[AzureOpenAI, str]:
     return client, settings.azure_openai_deployment
 
 
-def _client_local_llm(settings: Settings) -> tuple[OpenAI, str]:
-    client = OpenAI(base_url=settings.local_llm_base_url, api_key=settings.local_llm_api_key or "not-needed")
-    return client, settings.local_llm_model
-
-
 def get_extractor() -> Extractor:
     """Selects the extraction backend from ``OCR_PROVIDER`` — the same
     ``Extractor`` seam ``execute_analysis``/the Celery task always
@@ -245,8 +232,5 @@ def get_extractor() -> Extractor:
         return StubExtractor()
     if settings.ocr_provider == "azure_openai":
         client, model = _client_azure_openai(settings)
-        return VlmExtractor(client, model, provider="azure_openai")
-    if settings.ocr_provider == "local_llm":
-        client, model = _client_local_llm(settings)
-        return VlmExtractor(client, model, provider="local_llm")
-    raise RuntimeError(f"OCR_PROVIDER inconnu : {settings.ocr_provider!r} (attendu : stub, azure_openai, local_llm).")
+        return VlmExtractor(client, model)
+    raise RuntimeError(f"OCR_PROVIDER inconnu : {settings.ocr_provider!r} (attendu : stub, azure_openai).")

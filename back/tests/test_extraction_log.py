@@ -58,8 +58,8 @@ def traite_id(sync_engine):
 def test_record_extraction_then_list_extractions_round_trips(traite_id):
     extraction_log.record_extraction(
         traite_id=traite_id,
-        provider="local_llm",
-        model="moondream",
+        provider="azure_openai",
+        model="gpt-4o-vision",
         success=True,
         raw_response='{"numero_lcn": {"occurrence_1": "099900002222"}}',
         error=None,
@@ -71,8 +71,8 @@ def test_record_extraction_then_list_extractions_round_trips(traite_id):
     assert len(rows) == 1
     row = rows[0]
     assert row["traite_id"] == traite_id
-    assert row["fournisseur"] == "local_llm"
-    assert row["modele"] == "moondream"
+    assert row["fournisseur"] == "azure_openai"
+    assert row["modele"] == "gpt-4o-vision"
     assert row["succes"] is True
     assert row["reponse_brute"] == '{"numero_lcn": {"occurrence_1": "099900002222"}}'
     assert row["erreur"] is None
@@ -83,8 +83,8 @@ def test_record_extraction_then_list_extractions_round_trips(traite_id):
 def test_record_extraction_records_a_failed_attempt_with_raw_response(traite_id):
     extraction_log.record_extraction(
         traite_id=traite_id,
-        provider="local_llm",
-        model="moondream",
+        provider="azure_openai",
+        model="gpt-4o-vision",
         success=False,
         raw_response="The image features a gray and brown striped pattern.",
         error="La réponse du modèle ne contient pas d'objet JSON exploitable",
@@ -101,11 +101,11 @@ def test_record_extraction_records_a_failed_attempt_with_raw_response(traite_id)
 
 def test_list_extractions_orders_multiple_attempts_chronologically(traite_id):
     extraction_log.record_extraction(
-        traite_id=traite_id, provider="local_llm", model="moondream",
+        traite_id=traite_id, provider="azure_openai", model="gpt-4o-vision",
         success=False, raw_response="premier essai raté", error="erreur", duration_ms=500,
     )
     extraction_log.record_extraction(
-        traite_id=traite_id, provider="local_llm", model="moondream",
+        traite_id=traite_id, provider="azure_openai", model="gpt-4o-vision",
         success=True, raw_response="second essai réussi", error=None, duration_ms=600,
     )
 
@@ -116,7 +116,7 @@ def test_list_extractions_orders_multiple_attempts_chronologically(traite_id):
 
 def test_list_extractions_is_scoped_to_its_own_traite(traite_id, sync_engine):
     extraction_log.record_extraction(
-        traite_id=traite_id, provider="local_llm", model="moondream",
+        traite_id=traite_id, provider="azure_openai", model="gpt-4o-vision",
         success=True, raw_response="pour cette traite", error=None, duration_ms=100,
     )
 
@@ -129,8 +129,8 @@ def test_record_extraction_never_raises_on_a_bad_traite_id():
     that violates the foreign key, not just asserted in a comment."""
     extraction_log.record_extraction(
         traite_id=uuid.uuid4(),
-        provider="local_llm",
-        model="moondream",
+        provider="azure_openai",
+        model="gpt-4o-vision",
         success=True,
         raw_response="peu importe",
         error=None,

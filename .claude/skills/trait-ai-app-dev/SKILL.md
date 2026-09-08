@@ -1,6 +1,6 @@
 ---
 name: trait-ai-app-dev
-description: Run, rebuild, test, and troubleshoot the TRAIT-AI-APP stack (postgres, redis, ldap, ollama, backend, worker, frontend) — the concrete Docker Compose commands and the real gotchas already hit while building this project, not a generic Docker tutorial.
+description: Run, rebuild, test, and troubleshoot the TRAIT-AI-APP stack (postgres, redis, ldap, backend, worker, frontend) — the concrete Docker Compose commands and the real gotchas already hit while building this project, not a generic Docker tutorial.
 ---
 
 # Running TRAIT-AI-APP
@@ -12,7 +12,7 @@ Everything below assumes the working directory is `TRAIT-AI-APP/`.
 ## Everyday commands
 
 ```bash
-docker compose up -d          # postgres + redis + ldap + ollama + backend + worker + frontend
+docker compose up -d          # postgres + redis + ldap + backend + worker + frontend
 docker compose ps             # confirm everyone is healthy
 docker compose logs -f worker # watch the Celery task / real OCR calls
 make test                     # backend pytest, inside Docker, own test DB — run it TWICE, it must be stable both times

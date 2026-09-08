@@ -92,17 +92,12 @@ services:
       ENVIRONMENT: production
       # Real OCR/extraction (see app/services/vlm_extraction.py). Optional
       # — defaults to "stub" so a production deploy that hasn't made the
-      # OCR vendor decision yet still starts cleanly. Point LOCAL_LLM_*
-      # at your own model server; this composition doesn't bundle one
-      # (unlike docker-compose.yml's dev `ollama` service).
+      # OCR vendor decision yet still starts cleanly.
       OCR_PROVIDER: ${OCR_PROVIDER:-stub}
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
       AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
-      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-}
-      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-}
-      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-not-needed}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
