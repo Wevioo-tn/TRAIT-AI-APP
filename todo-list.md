@@ -40,14 +40,21 @@ remise-level architecture is revisited:
 - TR-124 — vérification IP par débiteur / BC par facture (needs a BC model,
   itself only meaningful inside a remise)
 
-**What's still buildable today, unaffected by this deferral** — these
-operate at the single-traite level the app already has:
-- TR-102 — identification par RIB (P0, next up)
-- TR-121 — double vérification N°L-CN via code-barres
-- TR-122 — domiciliation + code étab/agence/compte/clé structurés
-- TR-111 — cohérence montant chiffres ↔ lettres
-- TR-131/132/133 — items needing business clarification before any code
+**What was still buildable at the single-traite level — done (2026-09-08,
+BACKLOG.md Sprint 14), phase closed per your call**:
+- [x] TR-102 — identification par RIB
+- [x] TR-122 — domiciliation + code étab/agence/compte/clé structurés
+- [x] TR-111 — cohérence montant chiffres ↔ lettres
+- [x] TR-121 — double vérification N°L-CN via code-barres
+
+Remaining, not started — each needs something other than "just write the
+code" before it can be picked up:
+- TR-131/132/133 — business clarification with the MOA first (Case
+  Protestable, UC-10 cachet comparison, dérogations contractuelles) —
+  writing code here without an answer means guessing behavior.
+- Everything in the "blocked by this deferral" list above — needs the
+  batch/remise decision revisited first, not more single-traite work.
 
 **Revisit when**: real pointe-journalière volume is chiffré (see TR-101's
 original acceptance criteria), or when remise-level features become
-blocking for another reason.
+blocking for another reason — or when MOA answers land for TR-131/132/133.

@@ -625,6 +625,54 @@ conversation, not saved to `pilot_samples/` on disk — unlike Sprint 12,
 there's no file on disk yet to actually run this traite through the live
 pipeline end to end; that's still open if/when it's wanted.
 
+### ✅ Sprint 14 — UC-01 conformity backlog, phase 1 (done, phase closed per your call)
+**Per your call.** A full read of the functional spec
+(`20260707 IA AGENTIC TOILETTAGE TRAITE.pdf`) produced a PO gap-analysis
+backlog (13 tickets, an Artifact) comparing UC-01/BPMN against the real
+code. TR-101 (batch vs app-only scope) was resolved as: stay app-only for
+now, deferred formally in `todo-list.md` along with everything that
+depends on the `Remise` entity (TR-103/112/113/114/123/124). Of what's
+left buildable at today's single-traite scope, four stories shipped, each
+tested and committed individually:
+
+- [x] TR-102 — RIB-first débiteur identification (UC-01 étape 4):
+  `match_debiteur_by_rib` (exact match only, `imx.debiteurs.rib`) now
+  decides identity; name comparison (`best_match`, now casefolded — fixes
+  a real case-sensitivity bug found along the way) becomes corroboration
+  only, flagged (`alerte_ecart_nom`) when suspiciously low, and can never
+  by itself auto-confirm a traite. New `rapprochements_nlp.methode_identification`/
+  `alerte_ecart_nom` columns, new `Settings.rib_corroboration_min_score`,
+  surfaced in the frontend NLP panel.
+- [x] TR-122 — RIB reconstitué depuis 4 sous-champs (Code étab./Agence/
+  N° de Compte/Clé), cross-checked against the single-box `rib_tire`
+  reading before either feeds TR-102 — a disagreement joins the
+  duplicated-field `inconsistencies` list rather than trusting either
+  reading. Also extracts `domiciliation_texte`, with the spec's own
+  flagged edge case (agency name overflowing its box) named in the prompt.
+- [x] TR-111 — `montant_chiffres` cross-checked against `montant_lettres`
+  via the existing real French number-to-words converter (`nombres.py`),
+  not just each field's own internal 2-occurrence coherence.
+- [x] TR-121 — `numero_lcn`'s printed barcode decoded as a second,
+  independent source (`zxing-cpp`, real image processing — not a VLM
+  prompt), cross-checked against the OCR reading.
+
+**211/211 backend tests, twice, `ruff` clean** (166 → 182 → 194 → 202 →
+211 across the four stories), frontend unaffected past TR-102's panel
+update (28/28, `tsc -b` clean). Every story live-verified against the
+real dev DB, not just the test suite — including one honest live-testing
+result, not a shipped bug: TR-121's barcode decoder correctly handles
+its designed "no barcode decoded" fallback path on the real filled sample
+now in `pilot_samples/` (`RECTO.jpg`/`VERSO.jpg`) — the barcode doesn't
+decode on that specific phone-photo scan even after manual rotation/crop
+attempts, confirmed as genuine image quality, not a library
+misconfiguration (synthetic generated barcodes decode correctly across
+symbologies).
+
+**Phase closed here, per your call** — remaining backlog items all need
+either the batch/remise decision revisited or MOA clarification (Case
+Protestable, UC-10 cachet comparison, dérogations contractuelles); see
+`todo-list.md`.
+
 ## Backlog (not yet scheduled)
 
 - Party/entity unification (a company can be both an `adherent` and a
