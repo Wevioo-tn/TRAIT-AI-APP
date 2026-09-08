@@ -1,4 +1,5 @@
-"""Session tokens issued after a successful LDAP bind.
+"""Session tokens issued after a successful local login (see
+app/services/local_auth.py).
 
 A JWT here is just a signed, stateless session — there is no server-side
 session store to invalidate on logout (the frontend simply discards the

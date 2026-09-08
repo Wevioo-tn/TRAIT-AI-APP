@@ -125,15 +125,18 @@ Two things needed for the frontend that the design mockup never modeled
   `tireur_nom`/`tire_nom` (resolved via new `Traite.adherent`/`.debiteur`
   relationships) and a `GET /api/traites/counts` endpoint the 5 status
   cards need, neither scoped in Sprint 1.
-- **Intake form**: a small block (N° L-CN, montant, dates) in the upload
-  card. This project's own architecture decision (see "Two databases"
-  above and BACKLOG.md) is that these values are declared at intake — from
-  a bordereau de remise — not discovered by OCR, so creating a traite
-  needs somewhere to enter them before any file can be attached to it.
+- **No intake form**: the upload card no longer collects N° L-CN/montant/
+  dates at creation time (removed per an explicit later call) — a traite
+  is created from just the recto/verso scans, with `numero_lcn`/`montant`/
+  the dates server-generated as placeholders (`create_traite`,
+  `routes/traites.py`) and then replaced by the real values once
+  extraction succeeds and agrees on them (`_promote_canonical_identity`,
+  `services/traite_processing.py`).
 
-**Auth is real** (Sprint 7): `POST /api/auth/login` binds against a real
-LDAP directory (`app/services/ldap_auth.py`, backed in dev/CI by the
-`ldap` service — see below) and returns a JWT; `auth/AuthContext.tsx`
+**Auth is real** (Sprint 7; local since a later call — see below):
+`POST /api/auth/login` checks the submitted password against this app's
+own `users` table (`app/services/local_auth.py`, Argon2id via
+`app/services/password_hash.py`) and returns a JWT; `auth/AuthContext.tsx`
 persists `{token, username}` to `localStorage`, attaches the token to
 every request, and forces a logout on any `401` (including a token that
 expired mid-session). Every `/api/traites/*` route requires this token.
@@ -153,22 +156,22 @@ since curl doesn't enforce it. Only a real browser check caught it.
 ```bash
 cp .env.example .env      # optional — every value already has a safe default
 make build
-make up                   # postgres + redis + ldap + backend (:8000) + worker + frontend (:5173)
+make up                   # postgres + redis + backend (:8000) + worker + frontend (:5173)
 ```
 
 In another terminal, once postgres is healthy:
 
 ```bash
 make migrate               # alembic upgrade head
-make seed                  # populate imx.* with example referential data
+make seed                  # populate imx.* with example referential data + the two dev login users
 make test                  # full backend test suite (own DB, never touches dev data)
 ```
 
 Then open:
 - Frontend: http://localhost:5173 — log in with `h.mansouri` / `secret123`
-  (or `a.trabelsi` / `secret123`), the two users seeded into the dev `ldap`
-  container (see `docker-compose.yml`'s `ldap` service — real bind, not a
-  mock).
+  (or `a.trabelsi` / `secret123`), the two local accounts `make seed`
+  creates in this app's own `users` table (real Argon2 hashes, not a
+  mock — see `back/scripts/seed.py`).
 - Backend health check: http://localhost:8000/api/health
 - Backend interactive docs: http://localhost:8000/docs
 
@@ -191,13 +194,14 @@ TRAIT-AI-APP/
 │   │   ├── main.py              # FastAPI app + router registration
 │   │   ├── core/config.py       # settings, all sourced from env vars
 │   │   ├── api/routes/traites.py # traites CRUD + upload + analyse + status (auth-protected)
-│   │   ├── api/routes/auth.py   # POST /auth/login (LDAP bind → JWT)
+│   │   ├── api/routes/auth.py   # POST /auth/login (local users table → JWT)
 │   │   ├── api/deps.py          # get_current_user — the Bearer-token dependency
 │   │   ├── schemas/traite.py    # Pydantic request/response models
 │   │   ├── worker.py            # Celery app instance
 │   │   ├── tasks/traite_processing.py  # the Celery task (callable directly for tests)
 │   │   ├── services/
-│   │   │   ├── ldap_auth.py            # real LDAP bind (never reads/stores the password)
+│   │   │   ├── local_auth.py           # local username/password check against `users`
+│   │   │   ├── password_hash.py        # Argon2id hashing (never a plain-text password)
 │   │   │   ├── jwt_auth.py              # HS256 token issue/verify
 │   │   │   ├── audit.py                # audit_log write-through
 │   │   │   ├── storage.py              # file storage abstraction (local volume)
@@ -214,9 +218,11 @@ TRAIT-AI-APP/
 │   │       ├── session.py       # async engine/session for the running API
 │   │       └── models/
 │   │           ├── imx.py       # Adherent / Debiteur / Facture (IMX shape)
-│   │           └── traite.py    # this app's own operational tables
+│   │           ├── traite.py    # this app's own operational tables
+│   │           └── user.py      # local login accounts
 │   ├── migrations/               # Alembic — see "Database" below
-│   ├── scripts/seed.py           # example referential data
+│   ├── scripts/seed.py           # example referential data + the two dev login users
+│   ├── scripts/create_user.py    # create/reset one real user — the production-safe alternative to seed.py
 │   └── tests/                    # pytest — see "Testing" below
 └── front/
     └── src/
@@ -224,7 +230,7 @@ TRAIT-AI-APP/
         ├── theme.ts                # design tokens, copied verbatim from the mockup
         ├── styles/global.css       # base resets + responsive tp-* classes, ported verbatim
         ├── api/{client,types}.ts   # hand-typed fetch client mirroring the backend schemas
-        ├── auth/AuthContext.tsx    # real login (LDAP → JWT), persisted session, forced logout on 401
+        ├── auth/AuthContext.tsx    # real login (local users table → JWT), persisted session, forced logout on 401
         ├── layouts/AppLayout.tsx   # topbar + outlet shell for authenticated routes
         ├── components/             # Topbar, StatusBadge, ToastProvider, ProtectedRoute
         ├── lib/format.ts           # montant/date/SLA formatting — real, derived from real data
@@ -251,6 +257,12 @@ Four migrations so far:
    the one exception to "every table is a SQLAlchemy model": it's written
    as raw SQL (`op.execute`, not `op.create_table`) because it's never
    touched through the ORM at all — see `app/services/extraction_log.py`.
+5. `49a3fe136ee4_users_table` — local login accounts (`app/db/models/
+   user.py`), replacing the earlier LDAP-backed login. Autogenerate always
+   also proposes dropping `extractions_ia` on any migration generated
+   after 0004, for the reason explained in point 4 (it's invisible to
+   `Base.metadata`) — stripped by hand here, and worth knowing before
+   trusting the next autogenerate diff uncritically either.
 
 `migrations/env.py` sets `include_schemas=True` — without it, autogenerate
 silently ignores the `imx` schema entirely and will propose *recreating*
@@ -274,6 +286,7 @@ the mockup:
 | `decisions`                    | The cashier's final decision — API/table still live and tested, but no longer reachable from the UI (see Sprint 9) |
 | `audit_log`                    | "Toute action est horodatée et tracée" |
 | `extractions_ia`               | Not in the design (it predates real OCR) — the raw audit trail of every real VLM call, see below |
+| `users`                        | Not in the design either — local login accounts, replacing the earlier LDAP directory (see `app/services/local_auth.py`) |
 
 **Not** modeled as tables: "mentions obligatoires" and the date-rule checks.
 Both are derived at read time from `champs_extraits` /
@@ -282,10 +295,10 @@ separately would duplicate facts that already live elsewhere.
 
 ### Seed data
 
-`back/scripts/seed.py` is idempotent (safe to re-run) and inserts two
-groups of rows into `imx.*` only — never into the app's own `traites`,
-since those are meant to be created by the real upload → OCR → NLP
-pipeline, not faked ahead of time:
+`back/scripts/seed.py` is idempotent (safe to re-run). It inserts two
+groups of rows into `imx.*` — never into the app's own `traites`, since
+those are meant to be created by the real upload → OCR → NLP pipeline, not
+faked ahead of time — plus the two dev login users:
 
 1. The literal example rows from IMX's own table documentation
    (`ADH-0142` / `DEB-0087` / `FA-26-0117`), kept byte-for-byte faithful to
@@ -294,6 +307,13 @@ pipeline, not faked ahead of time:
    design mockup (ADACTIM, LA MÉDITERRANÉENNE, STE TEXTIS, ...), so the NLP
    reconciliation work in the next phase has real data to match against
    from day one.
+3. `h.mansouri` / `a.trabelsi` (both `secret123`) in this app's own
+   `users` table, real Argon2id hashes via `hash_password()` — the login
+   credentials the Quickstart section above uses.
+
+`back/scripts/create_user.py` is the one to reach for instead in any
+environment (including production) where the fake `imx.*` example data
+would be wrong to insert — see `.env.prod.example`.
 
 ## Testing
 
@@ -357,14 +377,19 @@ pipeline, not faked ahead of time:
   not hardcoded absolute dates (a fixed date silently drifts into the past
   as real time passes — caught exactly that way while building this file).
 - `test_analysis_readmodel_api.py` — the one true end-to-end integration
-  test: real `executer_analyse` → real `GET /api/traites/{id}` → asserts
+  test: real `execute_analysis` → real `GET /api/traites/{id}` → asserts
   the mentions/date-rules/matched-facture read-model the frontend actually
   consumes.
-- `test_auth.py` — `POST /api/auth/login` against the real `ldap` container
+- `test_auth.py` — `POST /api/auth/login` against a real seeded row in the
+  real `users` table (`conftest.py`'s `seed_test_user`), not mocked
   (valid credentials, wrong password, unknown user gets the *same* 401 as
   wrong password so the endpoint can't be used to enumerate usernames,
   empty credentials), plus that `/api/traites` rejects both a missing and
   an invalid Bearer token.
+- `test_password_hash.py` — pure unit tests for Argon2id hashing/verification
+  (`app/services/password_hash.py`): a hash actually verifies, a wrong
+  password doesn't, two hashes of the same password differ (real salting),
+  the plain text never appears in the hash.
 
 Frontend (`front/src/**/*.test.tsx`, Vitest + Testing Library,
 `make test-front`): `LoginPage`, `Topbar`, `QueuePage`, and `AnalysisPage`
@@ -372,10 +397,11 @@ component tests with the API client mocked, plus pure unit tests for the
 formatting utilities. "Responsive" isn't meaningfully testable under
 jsdom (no layout engine) — that was validated live in a real browser
 instead (see BACKLOG.md's Sprint 5/6 notes), not asserted here. The real
-LDAP → JWT flow (including session persistence across a page reload, and
+login → JWT flow (including session persistence across a page reload, and
 the authenticated document-blob viewer) is likewise only meaningfully
 testable live — see BACKLOG.md's Sprint 7 notes for what that live pass
-caught.
+caught (LDAP-based at the time; the mechanism changed later, the reasoning
+for testing it live didn't).
 
 ```bash
 make test          # or: docker compose run --rm backend pytest -v
@@ -397,31 +423,32 @@ stage:
   (non-root by construction) serves it and reverse-proxies `/api/*` to the
   backend (`front/nginx.conf`) — the browser only ever talks to one origin,
   so there's no CORS configuration to get right in production.
-- **No default secrets**: every security-relevant variable
-  (`JWT_SECRET`, `LDAP_USER_DN_TEMPLATE`, Postgres/LDAP admin credentials)
-  is a required env var with no fallback — `docker compose` refuses to
-  start without it, rather than silently running with a dev default in
-  production.
+- **No default secrets**: every security-relevant variable (`JWT_SECRET`,
+  Postgres admin credentials) is a required env var with no fallback —
+  `docker compose` refuses to start without it, rather than silently
+  running with a dev default in production.
 
 ```bash
 cp .env.prod.example .env.prod   # fill in every value — see the file's own comments
 docker compose -f docker-compose.prod.yml --env-file .env.prod build
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend alembic upgrade head
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm backend python -m scripts.create_user <username> <password>
 ```
 
-`postgres`/`redis`/`ldap` are included so this is runnable end-to-end as a
-reference — a real deployment will very likely point `DATABASE_URL` and
-`LDAP_URL`/`LDAP_USER_DN_TEMPLATE` at the organization's actual managed
-database and existing corporate directory instead of these bundled
-services, and put a TLS-terminating load balancer in front of the
-`frontend` container rather than exposing its port directly.
+`postgres`/`redis` are included so this is runnable end-to-end as a
+reference — a real deployment will very likely point `DATABASE_URL` at the
+organization's actual managed database instead of this bundled one, and
+put a TLS-terminating load balancer in front of the `frontend` container
+rather than exposing its port directly. Login is entirely local now (this
+app's own `users` table) — no external directory dependency to point
+anywhere.
 
 Validated by actually building and running this composition (not just
 reading it): `alembic upgrade head` against a fresh production database,
-`/api/health` reachable *through* nginx's reverse proxy, and a full real
-browser login (real LDAP bind → real JWT → queue page) — see BACKLOG.md's
-Sprint 7 notes, including the measured image-size reduction (backend
+`/api/health` reachable *through* nginx's reverse proxy, and (at the time,
+against the LDAP-based version — see BACKLOG.md's Sprint 7 notes) a full
+real browser login, including the measured image-size reduction (backend
 422 MB → 373 MB, frontend 632 MB → 74 MB) and confirmation via
 `docker exec ... id` that both containers actually run as non-root.
 
@@ -431,8 +458,8 @@ Tracked as a proper backlog in **[BACKLOG.md](BACKLOG.md)** — sprints,
 tasks, and status live there now rather than here, so there's a single
 source of truth. Short version: the DB foundations, the Traites API,
 document upload, the verification/decision workflow, the OCR/NLP pipeline
-with real VLM-based extraction (Azure OpenAI or a local model, switchable —
-see above), the full frontend port, real LDAP/JWT auth, and production
-Docker hardening are all done. What's deliberately not done: a real
-extraction *accuracy* pilot against actual bilingual FR/AR scans — see
+with real VLM-based extraction (Azure OpenAI — see above), the full
+frontend port, real local/JWT auth, and production Docker hardening are
+all done. What's deliberately not done: a real extraction *accuracy*
+pilot against actual bilingual FR/AR scans — see
 BACKLOG.md's Sprint 8 notes and "Backlog (not yet scheduled)" section.

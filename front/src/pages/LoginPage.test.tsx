@@ -49,7 +49,7 @@ describe("LoginPage", () => {
     await waitFor(() => expect(screen.getByText("Queue placeholder")).toBeInTheDocument());
   });
 
-  it("shows an error toast and stays on the page when the LDAP bind is rejected", async () => {
+  it("shows an error toast and stays on the page when login is rejected", async () => {
     mockedApi.login.mockRejectedValue(new ApiError(401, "Identifiant ou mot de passe incorrect."));
     renderWithProviders(<LoginWithRoutes />, { route: "/login" });
 

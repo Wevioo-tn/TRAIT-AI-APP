@@ -57,11 +57,10 @@ once.
 
 Sprints 0–9 shipped: DB foundations, Traites API, document upload,
 verification/decision workflow (backend only as of Sprint 9 — see below),
-the OCR/NLP async pipeline with real VLM extraction (Azure OpenAI or a
-local LLM, switchable — see the `trait-ai-app-ocr-providers` skill), the
-full frontend port, real LDAP/JWT auth, production Docker hardening, and a
-raw-SQL extraction audit log. Two things worth knowing before touching
-related code:
+the OCR/NLP async pipeline with real VLM extraction (Azure OpenAI — see
+the `trait-ai-app-ocr-providers` skill), the full frontend port, real
+JWT auth, production Docker hardening, and a raw-SQL extraction audit log.
+Two things worth knowing before touching related code:
 
 - The "Décision du caissier" UI panel was removed entirely (Sprint 9, per
   explicit request) — the backend decision endpoint/table are untouched
@@ -71,6 +70,18 @@ related code:
   instruments has never been evaluated — only the plumbing (image in,
   structured data out) has been proven. Don't treat a clean synthetic-test
   run as an accuracy claim.
+- Three changes made after Sprint 9, not yet reflected in BACKLOG.md's own
+  sprint numbering, but real and tested: (1) `local_llm`/the bundled
+  `ollama` service were dropped entirely — `OCR_PROVIDER` is `stub`/
+  `azure_openai` only now. (2) The queue screen's intake form (N° L-CN/
+  montant/dates typed in before upload) was removed — a traite is created
+  from just the scans, with those fields server-generated as placeholders
+  then overwritten by `execute_analysis` once extraction agrees on real
+  values (`_promote_canonical_identity`). (3) Login moved off LDAP onto a
+  local `users` table (Argon2id via `app/services/password_hash.py`) —
+  `make seed` (dev) or `scripts/create_user.py` (anywhere, including
+  production) creates accounts now; nothing does it automatically the way
+  the old LDAP container's env vars did.
 
 Unscheduled backlog items (RIB checksum validation, accent normalization
 for NLP matching, adherent/debiteur party unification) are listed at the

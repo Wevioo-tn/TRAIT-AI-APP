@@ -1,6 +1,6 @@
 ---
 name: trait-ai-app-dev
-description: Run, rebuild, test, and troubleshoot the TRAIT-AI-APP stack (postgres, redis, ldap, backend, worker, frontend) — the concrete Docker Compose commands and the real gotchas already hit while building this project, not a generic Docker tutorial.
+description: Run, rebuild, test, and troubleshoot the TRAIT-AI-APP stack (postgres, redis, backend, worker, frontend) — the concrete Docker Compose commands and the real gotchas already hit while building this project, not a generic Docker tutorial.
 ---
 
 # Running TRAIT-AI-APP
@@ -12,7 +12,7 @@ Everything below assumes the working directory is `TRAIT-AI-APP/`.
 ## Everyday commands
 
 ```bash
-docker compose up -d          # postgres + redis + ldap + backend + worker + frontend
+docker compose up -d          # postgres + redis + backend + worker + frontend
 docker compose ps             # confirm everyone is healthy
 docker compose logs -f worker # watch the Celery task / real OCR calls
 make test                     # backend pytest, inside Docker, own test DB — run it TWICE, it must be stable both times
@@ -22,8 +22,11 @@ make lint                      # ruff
 ```
 
 Login for manual testing: http://localhost:5173, `h.mansouri` / `secret123`
-(or `a.trabelsi` / `secret123`) — real users seeded into the bundled `ldap`
-service, real LDAP bind + JWT, not a stub.
+(or `a.trabelsi` / `secret123`) — real accounts in this app's own `users`
+table (`make seed` creates them, real Argon2id hashes), real local
+check + JWT, not a stub. If login ever fails after a fresh `up`, confirm
+`make seed` actually ran — unlike the earlier LDAP container, nothing
+creates these accounts automatically.
 
 ## After any code change that needs a rebuild
 

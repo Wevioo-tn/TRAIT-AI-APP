@@ -5,4 +5,4 @@ Alembic's ``env.py`` and the test suite both rely on this: importing
 ``app.db.base.Base.metadata``, which is what makes autogenerate and the
 schema-inspection tests possible.
 """
-from app.db.models import imx, traite  # noqa: F401
+from app.db.models import imx, traite, user  # noqa: F401

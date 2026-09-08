@@ -1,21 +1,23 @@
-"""Sprint 7 — LDAP login endpoint and JWT-protected routes.
+"""Sprint 7 (superseded) — local username/password login and JWT-protected
+routes.
 
-Runs against the real (throwaway, seeded) OpenLDAP container defined in
-docker-compose.yml — not a mock. See app/services/ldap_auth.py.
+Runs against the real `users` table in the real test database — not a
+mock. `conftest.py`'s `seed_test_user` fixture inserts a real Argon2 hash
+for TEST_USERNAME/TEST_PASSWORD once per test session; this file verifies
+the actual login endpoint (app/api/routes/auth.py, app/services/
+local_auth.py) authenticates against it for real. See BACKLOG.md's
+Sprint 7 notes for the LDAP-based version this replaced.
 """
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 
-from .conftest import TEST_USERNAME
-
-# Matches docker-compose.yml's `ldap` service LDAP_USERS/LDAP_PASSWORDS seed.
-SEEDED_PASSWORD = "secret123"
+from .conftest import TEST_PASSWORD, TEST_USERNAME
 
 
 async def test_login_with_valid_credentials_returns_token(client):
     response = await client.post(
-        "/api/auth/login", json={"username": TEST_USERNAME, "password": SEEDED_PASSWORD}
+        "/api/auth/login", json={"username": TEST_USERNAME, "password": TEST_PASSWORD}
     )
     assert response.status_code == 200
     body = response.json()
@@ -35,7 +37,7 @@ async def test_login_with_unknown_user_returns_same_401(client):
     """Unknown-user and wrong-password must be indistinguishable to the
     caller, so a login endpoint can't be used to enumerate valid usernames."""
     unknown = await client.post(
-        "/api/auth/login", json={"username": "no.such.user", "password": SEEDED_PASSWORD}
+        "/api/auth/login", json={"username": "no.such.user", "password": TEST_PASSWORD}
     )
     wrong_password = await client.post(
         "/api/auth/login", json={"username": TEST_USERNAME, "password": "not-the-password"}

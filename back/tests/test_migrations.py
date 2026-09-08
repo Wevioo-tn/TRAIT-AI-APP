@@ -30,6 +30,9 @@ def test_app_schema_has_expected_tables(sync_engine):
         # never touched through the ORM, but it's still part of this app's
         # schema and belongs in this inventory.
         "extractions_ia",
+        # Local login accounts (see app/db/models/user.py,
+        # app/services/local_auth.py) — replaces the earlier LDAP bind.
+        "users",
     }
 
 

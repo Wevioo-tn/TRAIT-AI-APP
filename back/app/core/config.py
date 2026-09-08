@@ -48,17 +48,6 @@ class Settings(BaseSettings):
     def cors_allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
-    # "Authentification par annuaire interne" (the design's own login copy)
-    # — a real LDAP bind, not a stand-in. Backed in dev/CI by a real
-    # (throwaway, seeded) OpenLDAP container, not mocked: unlike OCR, LDAP
-    # bind is a well-defined protocol operation with a genuine open-source
-    # test server available, so there's no honest reason to fake it.
-    ldap_url: str = "ldap://ldap:1389"
-    # cn=, not uid= — confirmed against the actual seeded tree of the
-    # bitnami/openldap dev container (its LDAP_USERS entries are keyed by
-    # cn, not uid) rather than assumed.
-    ldap_user_dn_template: str = "cn={username},ou=users,dc=trait-ai,dc=local"
-
     # HS256 dev default — production MUST override this via env var. Not a
     # secret worth protecting in this repo (there is no production secret
     # here), but flagged so it's never mistaken for one.

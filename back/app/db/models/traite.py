@@ -15,11 +15,11 @@ from decimal import Decimal
 
 from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
-from app.db.base import Base
+from app.db.base import Base, uuid_pk
 from app.db.models.imx import Adherent, Debiteur
 
 
@@ -68,14 +68,10 @@ class TypeDecision(str, enum.Enum):
     FRAUDE = "fraude"
 
 
-def _uuid_pk() -> Mapped[uuid.UUID]:
-    return mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-
-
 class Traite(Base):
     __tablename__ = "traites"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     numero_lcn: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
     montant: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     date_echeance: Mapped[date] = mapped_column(Date, nullable=False)
@@ -133,7 +129,7 @@ class TraiteDocument(Base):
     __tablename__ = "traite_documents"
     __table_args__ = (UniqueConstraint("traite_id", "face", name="uq_traite_documents_traite_face"),)
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     traite_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("traites.id"), nullable=False)
     face: Mapped[Face] = mapped_column(SAEnum(Face, name="face"), nullable=False)
     fichier_nom: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -150,7 +146,7 @@ class ChampExtrait(Base):
 
     __tablename__ = "champs_extraits"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     traite_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("traites.id"), nullable=False)
     nom_champ: Mapped[str] = mapped_column(String(100), nullable=False)
     occurrence: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -170,7 +166,7 @@ class RapprochementNlp(Base):
 
     __tablename__ = "rapprochements_nlp"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     traite_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("traites.id"), nullable=False)
     role: Mapped[RoleNlp] = mapped_column(SAEnum(RoleNlp, name="role_nlp"), nullable=False)
     valeur_scan: Mapped[str] = mapped_column(Text, nullable=False)
@@ -191,7 +187,7 @@ class VerificationManuelle(Base):
         UniqueConstraint("traite_id", "code_verification", name="uq_verif_manuelle_traite_code"),
     )
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     traite_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("traites.id"), nullable=False)
     code_verification: Mapped[VerificationCode] = mapped_column(
         SAEnum(VerificationCode, name="verification_code"), nullable=False
@@ -209,7 +205,7 @@ class Decision(Base):
 
     __tablename__ = "decisions"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     traite_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("traites.id"), nullable=False)
     type: Mapped[TypeDecision] = mapped_column(SAEnum(TypeDecision, name="type_decision"), nullable=False)
     commentaire: Mapped[str | None] = mapped_column(Text)
@@ -224,7 +220,7 @@ class AuditLogEntry(Base):
 
     __tablename__ = "audit_log"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[uuid.UUID] = uuid_pk()
     # Nullable: some entries (login, logout) aren't attached to any traite.
     traite_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("traites.id"))
     utilisateur: Mapped[str] = mapped_column(String(120), nullable=False)

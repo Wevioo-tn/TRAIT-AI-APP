@@ -26,31 +26,6 @@ services:
       timeout: 5s
       retries: 10
 
-  ldap:
-    # Bitnami retired free versioned tags on Docker Hub in 2025; "latest"
-    # under bitnamilegacy is the still-pullable free equivalent.
-    image: bitnamilegacy/openldap:latest
-    environment:
-      LDAP_ADMIN_USERNAME: admin
-      LDAP_ADMIN_PASSWORD: adminpassword
-      LDAP_ROOT: dc=trait-ai,dc=local
-      # LDAP_USER_DC is deliberately NOT set: it's deprecated and, worse,
-      # setting it to "users" (the image's own default OU name) makes the
-      # entrypoint try to create ou=users twice and crash with exit 68
-      # ("Already exists") — confirmed by running the image standalone.
-      # A real (throwaway) test directory, not a stub — see
-      # app/services/ldap_auth.py. h.mansouri matches the design mockup's
-      # own login placeholder ("h.mansouri" / Identifiant field).
-      LDAP_USERS: h.mansouri,a.trabelsi
-      LDAP_PASSWORDS: secret123,secret123
-    ports:
-      - "${LDAP_PORT:-1389}:1389"
-    healthcheck:
-      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:1389 -b dc=trait-ai,dc=local -D 'cn=admin,dc=trait-ai,dc=local' -w adminpassword >/dev/null"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   backend:
     build:
       context: ./back
@@ -62,7 +37,6 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/${POSTGRES_DB:-trait_ai}
       DATABASE_URL_TEST: postgresql+psycopg://${POSTGRES_USER:-trait}:${POSTGRES_PASSWORD:-trait}@postgres:5432/trait_ai_test
       REDIS_URL: redis://redis:6379/0
-      LDAP_URL: ldap://ldap:1389
       ENVIRONMENT: development
       # Kept in sync with FRONTEND_PORT below — if that's overridden in
       # .env without updating this too, the browser's CORS preflight will
@@ -80,8 +54,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      ldap:
         condition: service_healthy
 
   worker:

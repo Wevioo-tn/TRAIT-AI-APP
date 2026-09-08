@@ -408,6 +408,47 @@ bypassing Celery — the live `worker` and `.env` are currently pointed at a
 real Azure OpenAI resource with real credentials, and validating this
 sprint's changes didn't require spending your Azure budget.
 
+### ✅ Sprint 10 — Local login replaces LDAP (done)
+**Per your call** — LDAP directory (`bitnamilegacy/openldap`, dev/CI-only)
+dropped entirely in favor of this app owning its own identity store.
+
+- [x] 10.1 New `users` table (`app/db/models/user.py`) —
+  `id`/`username` (unique)/`password_hash`/`is_active`/timestamps.
+  Migration `49a3fe136ee4_users_table`; autogenerate's usual false-positive
+  "drop `extractions_ia`" (that table is invisible to `Base.metadata` by
+  design — raw SQL only, see Sprint 9) stripped by hand from both
+  `upgrade()`/`downgrade()`.
+- [x] 10.2 Argon2id password hashing (`app/services/password_hash.py`, via
+  `argon2-cffi`) — OWASP's current default recommendation. A dummy-hash
+  verification path (`verify_dummy_password`) runs when a username doesn't
+  exist, so an unknown-user login takes about as long as a real user's
+  wrong-password one — without it, real Argon2 verification only running
+  for existing usernames is a response-time side channel that leaks
+  exactly the fact the identical 401 message is meant to hide.
+- [x] 10.3 `app/services/local_auth.py` replaces `ldap_auth.py` — looks the
+  user up, verifies the hash off the event loop via `run_in_threadpool`
+  (Argon2 verification is deliberately slow, same reasoning the earlier
+  LDAP bind and the disk I/O in `storage.py` already use that pattern
+  for). `routes/auth.py` updated accordingly; `ldap3` dependency removed.
+- [x] 10.4 `scripts/seed.py` now also seeds the two dev accounts
+  (`h.mansouri`/`a.trabelsi`, both `secret123`) — real Argon2 hashes, not
+  fixture data. New `scripts/create_user.py`: a minimal, idempotent
+  create-or-reset-password tool, deliberately separate from `seed.py`
+  because that script also inserts fake `imx.*` example companies, which
+  would be wrong to run against a real production database. Documented as
+  the production account-creation path in `.env.prod.example`.
+- [x] 10.5 `docker-compose.yml`/`.prod.yml`, `.env*` — `ldap` service,
+  volume, and every `LDAP_*` var removed.
+
+**166/166 backend tests, twice** (`test_auth.py` rewritten against a real
+seeded row in the real test database via a new `seed_test_user` fixture,
+not mocked; new `test_password_hash.py` for the hashing primitives),
+**26/26 frontend** (only one test needed a rename — the frontend never had
+LDAP-specific code, it just calls `/api/auth/login`). `ruff`/`tsc -b`
+clean. Live-verified against the real running dev stack: seeded the dev DB,
+logged in for real over HTTP, made an authenticated request, confirmed a
+wrong password still 401s.
+
 ## Backlog (not yet scheduled)
 
 - Party/entity unification (a company can be both an `adherent` and a

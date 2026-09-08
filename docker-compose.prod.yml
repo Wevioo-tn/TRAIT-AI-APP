@@ -9,11 +9,12 @@
 #     security is a required env var with no fallback, so this refuses to
 #     start with the dev defaults by accident.
 #
-# postgres/redis/ldap are still included here so the stack is runnable
+# postgres/redis are still included here so the stack is runnable
 # end-to-end as a reference/demo. A real deployment will very likely point
-# LDAP_URL/DATABASE_URL at the organization's actual directory and managed
-# database instead of these — see README.md's "Production deployment"
-# section.
+# DATABASE_URL at the organization's actual managed database instead of
+# these — see README.md's "Production deployment" section. Authentication
+# is entirely local now (this app's own `users` table, see
+# app/services/local_auth.py) — no external directory dependency at all.
 services:
   postgres:
     image: postgres:16-alpine
@@ -39,27 +40,6 @@ services:
       retries: 10
     restart: unless-stopped
 
-  ldap:
-    image: bitnamilegacy/openldap:latest
-    environment:
-      LDAP_ADMIN_USERNAME: ${LDAP_ADMIN_USERNAME:?set LDAP_ADMIN_USERNAME}
-      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD:?set LDAP_ADMIN_PASSWORD}
-      LDAP_ROOT: ${LDAP_ROOT:?set LDAP_ROOT}
-      # Optional — only useful for exercising this bundled demo directory
-      # itself (e.g. a smoke test). A real deployment points LDAP_URL/
-      # LDAP_USER_DN_TEMPLATE at an existing corporate directory instead
-      # and doesn't need these at all.
-      LDAP_USERS: ${LDAP_USERS:-}
-      LDAP_PASSWORDS: ${LDAP_PASSWORDS:-}
-    volumes:
-      - ldap_data:/bitnami/openldap
-    healthcheck:
-      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:1389 -b $$LDAP_ROOT -D cn=$$LDAP_ADMIN_USERNAME,$$LDAP_ROOT -w $$LDAP_ADMIN_PASSWORD >/dev/null"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
   backend:
     build:
       context: ./back
@@ -67,8 +47,6 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
-      LDAP_URL: ldap://ldap:1389
-      LDAP_USER_DN_TEMPLATE: ${LDAP_USER_DN_TEMPLATE:?set LDAP_USER_DN_TEMPLATE, e.g. cn={username},ou=users,dc=example,dc=com}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a real random value, not the dev default}
       ENVIRONMENT: production
       # Same-origin in production (see front/nginx.conf's reverse proxy) —
@@ -78,7 +56,6 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-      ldap: {condition: service_healthy}
     restart: unless-stopped
 
   worker:
@@ -123,4 +100,3 @@ services:
 volumes:
   postgres_data:
   uploads_data:
-  ldap_data:

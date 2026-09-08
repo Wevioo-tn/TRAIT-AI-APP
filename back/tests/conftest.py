@@ -14,14 +14,16 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.db.models.user import User
 from app.db.session import get_session
 from app.main import app
 from app.services.jwt_auth import create_access_token
+from app.services.password_hash import hash_password
 from app.services.storage import LocalFileStorage, get_storage
 
 settings = get_settings()
@@ -29,9 +31,12 @@ settings = get_settings()
 BACK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The identity every `client`-based test is authenticated as by default.
-# Bypasses real LDAP (most tests aren't testing auth itself, just the
-# endpoints behind it) — see test_auth.py for the login/LDAP path itself.
+# Most tests bypass a real login (they aren't testing auth itself, just the
+# endpoints behind it) via create_access_token below — see test_auth.py for
+# the actual login path, which needs `seed_test_user` (also below) to have
+# a real row to authenticate against.
 TEST_USERNAME = "h.mansouri"
+TEST_PASSWORD = "secret123"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -50,6 +55,21 @@ def sync_engine(apply_migrations):
     engine = create_engine(settings.database_url_test, future=True)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def seed_test_user(sync_engine):
+    """A real row in the real `users` table — TEST_USERNAME/TEST_PASSWORD
+    must actually authenticate for test_auth.py's login tests, not just be
+    accepted as a pre-made JWT the way every other `client`-based test
+    treats them. Session-scoped: `users` is never touched by
+    `clean_app_tables`'s per-test TRUNCATE, so one real Argon2 hash for the
+    whole session is enough."""
+    with Session(sync_engine) as session:
+        existing = session.scalar(select(User).where(User.username == TEST_USERNAME))
+        if existing is None:
+            session.add(User(username=TEST_USERNAME, password_hash=hash_password(TEST_PASSWORD)))
+            session.commit()
 
 
 @pytest.fixture

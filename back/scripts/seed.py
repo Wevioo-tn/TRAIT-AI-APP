@@ -1,12 +1,18 @@
-"""Populate the database with example IMX-referential data.
+"""Populate the database with example IMX-referential data and the local
+dev login users.
 
-Only ``imx.*`` tables are seeded. The app's own ``traites`` table (and
-everything that hangs off it — extracted fields, NLP matches, manual
-checks, decisions) is intentionally left empty: those rows are meant to be
-created by the real upload -> OCR -> NLP pipeline in a later phase, not
-faked ahead of time.
+``imx.*`` gets the referential data described below. The app's own
+``traites`` table (and everything that hangs off it — extracted fields,
+NLP matches, manual checks, decisions) is intentionally left empty: those
+rows are meant to be created by the real upload -> OCR -> NLP pipeline in
+a later phase, not faked ahead of time. ``users`` gets the two dev login
+accounts — since this app dropped the earlier LDAP directory in favor of
+its own users table (see BACKLOG.md's Sprint 7 notes and
+app/services/local_auth.py), *something* has to create the first accounts,
+and a seed script — the same mechanism already used for referential data
+— is that something for local dev.
 
-Two sets of rows are inserted:
+Two sets of imx.* rows are inserted:
 
 1. The exact example rows from IMX's own table documentation
    (ADH-0142 / DEB-0087 / FA-26-0117) — kept byte-for-byte faithful to the
@@ -23,11 +29,22 @@ Usage (inside the backend container):
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.imx import Adherent, Debiteur, Facture, StatutContrat, StatutFacture
+from app.db.models.user import User
+from app.services.password_hash import hash_password
+
+# (username, password) — matches the two identities the design mockup's
+# own login screen references ("h.mansouri" is its literal Identifiant
+# placeholder). Dev-only credentials, not meant to survive into a real
+# deployment (see README's production notes).
+USERS: list[tuple[str, str]] = [
+    ("h.mansouri", "secret123"),
+    ("a.trabelsi", "secret123"),
+]
 
 # (code, raison_sociale, matricule_fiscal, statut)
 ADHERENTS: list[tuple[str, str, str | None, StatutContrat]] = [
@@ -105,6 +122,17 @@ def run(session: Session) -> None:
             )
         )
 
+    # Not session.merge(): User's primary key is a server-generated UUID,
+    # not the username, so merge() (which matches by PK) would insert a
+    # fresh duplicate row every run instead of updating the existing one —
+    # look up by the actual unique key instead.
+    for username, password in USERS:
+        user = session.scalar(select(User).where(User.username == username))
+        if user is None:
+            session.add(User(username=username, password_hash=hash_password(password)))
+        else:
+            user.password_hash = hash_password(password)
+
     session.commit()
 
 
@@ -113,7 +141,10 @@ def main() -> None:
     engine = create_engine(settings.database_url, future=True)
     with Session(engine) as session:
         run(session)
-    print(f"Seeded {len(ADHERENTS)} adherents, {len(DEBITEURS)} debiteurs, {len(FACTURES)} factures.")
+    print(
+        f"Seeded {len(ADHERENTS)} adherents, {len(DEBITEURS)} debiteurs, "
+        f"{len(FACTURES)} factures, {len(USERS)} users."
+    )
 
 
 if __name__ == "__main__":
