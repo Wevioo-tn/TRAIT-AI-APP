@@ -574,6 +574,57 @@ implies it eventually should be (one sample, not a real ground-truth set)
 — but the pipeline no longer silently corrupts party names on the single
 most common real-world shape of "this field is legitimately blank."
 
+### ✅ Sprint 13 — imx.* reseeded from one real, filled Lettre de Change (done)
+**Per your call** — you supplied a real, physically filled and signed
+Lettre de Change (a different sample than Sprint 12's blank annotated
+template) and asked to wipe `imx.*` and rebuild it from *only* what that
+document actually states, as prep work ("step 0") before the RIB-first
+matching sprint discussed but not yet started.
+
+- [x] 13.1 `TRUNCATE imx.factures, imx.debiteurs, imx.adherents CASCADE`
+  against the dev DB. This also cascaded into `traites` and everything
+  hanging off it (an FK from `traites.code_adherent/code_debiteur` into
+  `imx.*` exists — corrected on the spot after earlier, incorrectly,
+  saying no such FK existed) — acceptable, every wiped traite was
+  throwaway pilot-run data from Sprint 12.
+- [x] 13.2 `scripts/seed.py` rewritten to one coherent scenario instead of
+  the old mix of "byte-for-byte IMX doc example" rows plus unrelated
+  design-mockup entities: `ADH-1001 ADACTIM` (tireur stamp) and
+  `DEB-1001 LA MÉDITERRANÉENNE` (RIB `11003000291700178836`, transcribed
+  with high confidence directly from the document's boxed RIB digits —
+  the one field printed box-by-box rather than free-hand). The debtor's
+  `raison_sociale`/`adresse` were **not** independently legible from the
+  handwriting (the "Nom et adresse du Tiré" box reads as address-only in
+  the photo) — kept because they match a pre-existing fixture value tied
+  to the same RIB, flagged inline in `seed.py` as inferred, not
+  transcribed, so a future correction knows exactly which fields to
+  re-check against the original.
+- [x] 13.3 One `imx.factures` row (`FA-26-0301`) added on explicit
+  follow-up request, since leaving the table empty makes
+  `find_matching_invoice` (`mentions_rules.py`) permanently return `None`
+  and the "Date de création ≥ date de la facture rapprochée" rule
+  permanently `not applicable`. Unlike the RIB, nothing on the instrument
+  gives a real TTC/avoirs split or invoice number — `montant_ttc`/
+  `montant_avoirs` (8400.000 / 282.496) were chosen so the *generated*
+  `montant_net` lands exactly on the traite's own real, document-stated
+  montant (8117,504 DT — both handwritten en lettres and boxed en
+  chiffres); `date_facture` set before the traite's date de création so
+  the date rule evaluates `true` instead of staying inert. Documented in
+  `seed.py` as reconstructed, not read off the page.
+- [x] 13.4 `test_seed_data.py`'s `test_documentation_example_matches_screenshot`
+  (asserted on the now-deleted `ADH-0142`/`DEB-0087`/`FA-26-0117` rows)
+  renamed to `test_real_sample_facture_montant_net_computed_by_db` and
+  rewritten against the new `ADH-1001`/`DEB-1001`/`FA-26-0301` rows — same
+  proof (Postgres's generated column computes `montant_net`, not Python
+  arithmetic), now anchored to the real sample instead of the IMX
+  documentation excerpt.
+
+**166/166 backend tests, twice, `ruff` clean.** No other test depended on
+the removed rows. The source photos for this sample were shared inline in
+conversation, not saved to `pilot_samples/` on disk — unlike Sprint 12,
+there's no file on disk yet to actually run this traite through the live
+pipeline end to end; that's still open if/when it's wanted.
+
 ## Backlog (not yet scheduled)
 
 - Party/entity unification (a company can be both an `adherent` and a

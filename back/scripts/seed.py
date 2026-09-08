@@ -12,16 +12,17 @@ app/services/local_auth.py), *something* has to create the first accounts,
 and a seed script — the same mechanism already used for referential data
 — is that something for local dev.
 
-Two sets of imx.* rows are inserted:
+imx.* rows: exactly one adherent (ADACTIM) and one debiteur (its real
+tiré), transcribed from one real, physical Lettre de Change (per your
+request — the previous fixture mixed IMX-doc-example rows with unrelated
+mockup entities, never tied to one coherent, real document). No factures:
+nothing on the instrument itself states an invoice number or amount
+breakdown, and inventing one would be exactly the kind of unsupported
+guess this project's own extraction code deliberately avoids elsewhere.
 
-1. The exact example rows from IMX's own table documentation
-   (ADH-0142 / DEB-0087 / FA-26-0117) — kept byte-for-byte faithful to the
-   source so anyone cross-checking against the docs finds exactly what they
-   expect.
-2. A fuller set matching the entities already used throughout the TRAIT-AI
-   design mockup (ADACTIM, LA MÉDITERRANÉENNE, STE TEXTIS, ...), so the NLP
-   reconciliation work in the next phase has real, realistic data to match
-   against from day one.
+Two fields below were not cleanly legible from the handwriting and are
+flagged inline — confirm/correct before trusting this as ground truth for
+matching-logic tests.
 
 Usage (inside the backend container):
     python -m scripts.seed
@@ -47,42 +48,46 @@ USERS: list[tuple[str, str]] = [
 ]
 
 # (code, raison_sociale, matricule_fiscal, statut)
+# Transcribed from the tireur stamp: "ADACTIM", "MF 1330392 A/AM 000",
+# "2036 Sokra", tel 31 340000 / fax 71 721163 (address not stored — Adherent
+# has no address column). The last MF digit before "92" reads as either 8
+# or 9 in the handwriting/stamp — kept as documented, but worth eyeballing
+# the original once more if a later mismatch traces back here.
 ADHERENTS: list[tuple[str, str, str | None, StatutContrat]] = [
-    ("ADH-0142", "SO.CO.PAR.", None, StatutContrat.ACTIF),  # exemple documentation IMX
     ("ADH-1001", "ADACTIM", "1330392/A/A/M/000", StatutContrat.ACTIF),
-    ("ADH-1002", "STE TEXTIS", None, StatutContrat.ACTIF),
-    ("ADH-1003", "COMPTOIR DU SUD", None, StatutContrat.ACTIF),
-    ("ADH-1004", "SARL EL FATH", None, StatutContrat.ACTIF),
-    ("ADH-1005", "MEDIPLAST", None, StatutContrat.ACTIF),
-    ("ADH-1006", "ETS BEN AMOR", None, StatutContrat.ACTIF),
 ]
 
 # (code, raison_sociale, adresse, rib, code_adherent)
-# RIBs below are fictional but structurally valid (2 + 3 + 13 + 2 = 20 digits,
-# matching the reconstitution rule already used in the design mockup).
+# RIB transcribed with high confidence directly from the boxed digits
+# ("Code étab." 11 / "Code Agence" 003 / "N° de Compte" 0002917001788 /
+# clé 36 -> 11003000291700178836), the one field on this document that's
+# printed in individual boxes rather than free-hand cursive.
+#
+# raison_sociale/adresse are NOT directly legible from the handwriting in
+# the "Nom et adresse du Tiré" box (it reads as an address only — lot
+# number, "Z.I.", a locality, "Ariana" — no company-name line I could
+# confidently separate out). "LA MÉDITERRANÉENNE" / "Lot 31, Z.I. Chotrana
+# II, 2036 Ariana" is inferred from this exact RIB having already been
+# used for that identity earlier in this project's fixtures, not read
+# fresh off this photo — please confirm or correct both before relying on
+# this as ground truth.
 DEBITEURS: list[tuple[str, str, str | None, str, str | None]] = [
-    ("DEB-0087", "LA MEDITERRANEENNE", "Lot 31, Z.I. Chotrana II, 2036 Ariana",
-     "21258159852364789588", "ADH-0142"),  # exemple documentation IMX
-    ("DEB-1001", "LA MÉDITERRANÉENNE", "Lot 31, Z.I, Chotrana II, 2036 Ariana",
+    ("DEB-1001", "LA MÉDITERRANÉENNE", "Lot 31, Z.I. Chotrana II, 2036 Ariana",
      "11003000291700178836", "ADH-1001"),
-    ("DEB-1002", "SOTUMAG", None, "10004123456789012345", "ADH-1001"),
-    ("DEB-1003", "ETS GHARBI FRÈRES", None, "20011998877665544321", "ADH-1002"),
-    ("DEB-1004", "SOCIÉTÉ EL AMEN", None, "08017556677889900112", "ADH-1002"),
-    ("DEB-1005", "COMPTOIR NABEUL", None, "05033445566778899003", "ADH-1003"),
-    ("DEB-1006", "MEDIPLAST", None, "07022334455667788994", "ADH-1004"),
-    ("DEB-1007", "ETS BEN AMOR", None, "09044556677889900225", "ADH-1004"),
 ]
 
-# (num_facture, code_adherent, code_debiteur, montant_ttc, montant_avoirs, date_facture, statut)
+# One reconstructed facture, added per your explicit go-ahead. Unlike the
+# RIB above, nothing on the document itself gives a num_facture or a
+# TTC/avoirs split — only montant_ttc/montant_avoirs are chosen (8400.000 /
+# 282.496) so the generated montant_net lands exactly on the traite's own
+# real montant (8117.504 DT, both handwritten in lettres and boxed en
+# chiffres). date_facture is set before the traite's date de création
+# (2026-08-05) so "Date de création >= date de la facture rapprochée"
+# evaluates true instead of staying not-applicable. num_facture is an
+# arbitrary but plausibly-formatted placeholder.
 FACTURES: list[tuple[str, str, str, Decimal, Decimal, date, StatutFacture]] = [
-    ("FA-26-0117", "ADH-0142", "DEB-0087", Decimal("8400.000"), Decimal("282.496"),
-     date(2026, 8, 7), StatutFacture.ENCOURS),  # exemple documentation IMX — montant_net attendu: 8117.504
-    ("FA-26-0203", "ADH-1001", "DEB-1001", Decimal("750.000"), Decimal("0.000"),
-     date(2026, 8, 10), StatutFacture.ENCOURS),
-    ("FA-26-0198", "ADH-1002", "DEB-1003", Decimal("520.000"), Decimal("20.000"),
-     date(2026, 8, 5), StatutFacture.ENCOURS),
-    ("FA-26-0150", "ADH-1003", "DEB-1005", Decimal("90.000"), Decimal("0.000"),
-     date(2026, 8, 1), StatutFacture.PAYEE),
+    ("FA-26-0301", "ADH-1001", "DEB-1001", Decimal("8400.000"), Decimal("282.496"),
+     date(2026, 7, 28), StatutFacture.ENCOURS),
 ]
 
 

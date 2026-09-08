@@ -1,10 +1,12 @@
 """Verifies the seed script produces correct, faithful, idempotent data.
 
-The key assertion here is ``test_documentation_example_matches_screenshot``:
-it feeds the exact TTC/avoirs from the IMX documentation through the real
-generated column and checks the database computes the same montant_net the
-documentation highlights (8 117,504) — proving the schema, not just the
-Python arithmetic, is correct.
+The key assertion here is ``test_real_sample_facture_montant_net_computed_by_db``:
+it feeds the reconstructed TTC/avoirs for the one real sample traite (see
+seed.py's own docstring — ADACTIM / LA MÉDITERRANÉENNE, transcribed from an
+actual physical Lettre de Change, Sprint 12) through the real generated
+column and checks the database computes the same montant_net the traite
+itself states (8 117,504) — proving the schema, not just the Python
+arithmetic, is correct.
 """
 from decimal import Decimal
 
@@ -22,21 +24,22 @@ def test_seed_creates_expected_row_counts(db_session):
     assert len(db_session.scalars(select(Facture)).all()) == len(seed.FACTURES)
 
 
-def test_documentation_example_matches_screenshot(db_session):
+def test_real_sample_facture_montant_net_computed_by_db(db_session):
     seed.run(db_session)
 
-    adherent = db_session.get(Adherent, "ADH-0142")
-    assert adherent.raison_sociale == "SO.CO.PAR."
+    adherent = db_session.get(Adherent, "ADH-1001")
+    assert adherent.raison_sociale == "ADACTIM"
 
-    debiteur = db_session.get(Debiteur, "DEB-0087")
-    assert debiteur.rib == "21258159852364789588"
-    assert debiteur.code_adherent == "ADH-0142"
+    debiteur = db_session.get(Debiteur, "DEB-1001")
+    assert debiteur.rib == "11003000291700178836"
+    assert debiteur.code_adherent == "ADH-1001"
 
-    facture = db_session.get(Facture, "FA-26-0117")
+    facture = db_session.get(Facture, "FA-26-0301")
     assert facture.montant_ttc == Decimal("8400.000")
     assert facture.montant_avoirs == Decimal("282.496")
     # Computed by Postgres itself (GENERATED ALWAYS AS ttc - avoirs), not by
-    # the application — this is the number the design mockup highlights.
+    # the application — this is the traite's own real montant (8117,504 DT,
+    # both handwritten en lettres and boxed en chiffres on the sample).
     assert facture.montant_net == Decimal("8117.504")
 
 
