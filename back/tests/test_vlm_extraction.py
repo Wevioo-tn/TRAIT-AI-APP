@@ -14,9 +14,14 @@ import pytest
 from app.core.config import Settings
 from app.db.models.traite import Face, Traite, TraiteDocument
 from app.services.extraction import (
+    CHAMP_CLE_RIB,
+    CHAMP_CODE_AGENCE,
+    CHAMP_CODE_ETABLISSEMENT,
     CHAMP_LIEU_CREATION,
+    CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
+    ROLE_DOMICILIATION,
     ROLE_ORDRE,
     ROLE_TIRE,
     ROLE_TIREUR,
@@ -110,9 +115,14 @@ def test_extract_maps_both_occurrences_and_parties(monkeypatch):
       "date_creation": {"occurrence_1": "2026-09-01", "occurrence_2": "2026-09-01"},
       "rib_tire": {"occurrence_1": "TN591000...", "occurrence_2": null},
       "lieu_creation": {"occurrence_1": "Tunis", "occurrence_2": "Tunis"},
+      "code_etablissement": {"occurrence_1": "11", "occurrence_2": "11"},
+      "code_agence": {"occurrence_1": "003", "occurrence_2": "003"},
+      "numero_compte": {"occurrence_1": "0002917001788", "occurrence_2": "0002917001788"},
+      "cle_rib": {"occurrence_1": "36", "occurrence_2": "36"},
       "tireur_texte": "ADACTIM",
       "tire_texte": "LA MEDITERRANEENNE",
-      "ordre_texte": "SPG"
+      "ordre_texte": "SPG",
+      "domiciliation_texte": "Agence Centrale, 2036 Ariana"
     }"""
     client = _FakeClient(response_text)
     extractor = VlmExtractor(client, "test-model")
@@ -124,9 +134,18 @@ def test_extract_maps_both_occurrences_and_parties(monkeypatch):
     assert by_field[(CHAMP_RIB_TIRE, 1)] == "TN591000..."
     assert by_field[(CHAMP_RIB_TIRE, 2)] is None
     assert by_field[(CHAMP_LIEU_CREATION, 1)] == "Tunis"
+    assert by_field[(CHAMP_CODE_ETABLISSEMENT, 1)] == "11"
+    assert by_field[(CHAMP_CODE_AGENCE, 1)] == "003"
+    assert by_field[(CHAMP_NUMERO_COMPTE, 1)] == "0002917001788"
+    assert by_field[(CHAMP_CLE_RIB, 1)] == "36"
 
     by_role = {p.role: p.scanned_value for p in result.parties}
-    assert by_role == {ROLE_TIREUR: "ADACTIM", ROLE_TIRE: "LA MEDITERRANEENNE", ROLE_ORDRE: "SPG"}
+    assert by_role == {
+        ROLE_TIREUR: "ADACTIM",
+        ROLE_TIRE: "LA MEDITERRANEENNE",
+        ROLE_ORDRE: "SPG",
+        ROLE_DOMICILIATION: "Agence Centrale, 2036 Ariana",
+    }
 
     # Confirms the model actually received both images, not just the prompt.
     sent_content = client.chat.completions.last_kwargs["messages"][0]["content"]
@@ -163,6 +182,26 @@ def test_extract_logs_the_failed_attempt_with_the_real_raw_response(monkeypatch)
     assert log[0]["success"] is False
     assert log[0]["raw_response"] == off_topic_response
     assert "JSON" in log[0]["error"]
+
+
+def test_extract_reports_absent_domiciliation_and_rib_subfields_as_none():
+    """The model response can legitimately omit a key entirely (not just
+    return null for it) — must be read as absent, same honest-fallback
+    treatment as every other genuinely-unreadable field, never a crash."""
+    response_text = """{
+      "numero_lcn": {"occurrence_1": "011570763437", "occurrence_2": "011570763437"}
+    }"""
+    client = _FakeClient(response_text)
+    extractor = VlmExtractor(client, "test-model")
+
+    result = extractor.extract(_traite_with_documents(), b"recto-bytes", b"verso-bytes")
+
+    by_field = {(f.field_name, f.occurrence): f.value for f in result.fields}
+    assert by_field[(CHAMP_CODE_ETABLISSEMENT, 1)] is None
+    assert by_field[(CHAMP_CODE_AGENCE, 2)] is None
+
+    by_role = {p.role: p.scanned_value for p in result.parties}
+    assert by_role[ROLE_DOMICILIATION] is None
 
 
 def test_extract_skips_the_model_call_for_non_image_content_type():

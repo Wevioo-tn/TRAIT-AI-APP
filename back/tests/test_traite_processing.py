@@ -24,9 +24,13 @@ from app.db.models.traite import (
     VerificationManuelle,
 )
 from app.services.extraction import (
+    CHAMP_CLE_RIB,
+    CHAMP_CODE_AGENCE,
+    CHAMP_CODE_ETABLISSEMENT,
     CHAMP_DATE_CREATION,
     CHAMP_ECHEANCE,
     CHAMP_MONTANT_CHIFFRES,
+    CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
     ROLE_TIRE,
@@ -36,7 +40,13 @@ from app.services.extraction import (
     PartyCandidate,
     StubExtractor,
 )
-from app.services.traite_processing import _canonicalize_rib, _parse_date, _parse_montant, execute_analysis
+from app.services.traite_processing import (
+    _canonicalize_rib,
+    _parse_date,
+    _parse_montant,
+    execute_analysis,
+    reconstruct_rib,
+)
 
 
 class _BrokenExtractor:
@@ -145,7 +155,7 @@ def test_name_only_match_never_yields_controle_manuel_requis_even_at_100_score(d
     assert result.tire_nom == "LA MÉDITERRANÉENNE"
 
     fields = db_session.scalars(select(ChampExtrait).where(ChampExtrait.traite_id == traite.id)).all()
-    assert len(fields) == 14  # 7 fields x 2 occurrences
+    assert len(fields) == 22  # 11 fields x 2 occurrences (7 original + 4 RIB sub-fields, TR-122)
 
     nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
     by_role = {n.role: n for n in nlp}
@@ -282,6 +292,99 @@ class TestRibFirstIdentification:
         assert tire_row.code_debiteur_matche == "DEB-2002"
         assert tire_row.methode_identification == MethodeIdentification.RIB
         assert tire_row.alerte_ecart_nom is False
+
+
+class TestRibReconstructionFromSubfields:
+    """UC-01, étape 4: the RIB is also reconstructed from 4 separately
+    printed sub-fields (Code étab./Code Agence/N° de Compte/Clé), compared
+    against the direct rib_tire reading before either feeds match_debiteur_by_rib."""
+
+    def _rib_pair(self, rib: str) -> list[FieldCandidate]:
+        return [FieldCandidate(CHAMP_RIB_TIRE, 1, rib), FieldCandidate(CHAMP_RIB_TIRE, 2, rib)]
+
+    def _subfield_pairs(self, code_etab: str, code_agence: str, numero_compte: str, cle: str) -> list[FieldCandidate]:
+        return [
+            FieldCandidate(CHAMP_CODE_ETABLISSEMENT, 1, code_etab),
+            FieldCandidate(CHAMP_CODE_ETABLISSEMENT, 2, code_etab),
+            FieldCandidate(CHAMP_CODE_AGENCE, 1, code_agence),
+            FieldCandidate(CHAMP_CODE_AGENCE, 2, code_agence),
+            FieldCandidate(CHAMP_NUMERO_COMPTE, 1, numero_compte),
+            FieldCandidate(CHAMP_NUMERO_COMPTE, 2, numero_compte),
+            FieldCandidate(CHAMP_CLE_RIB, 1, cle),
+            FieldCandidate(CHAMP_CLE_RIB, 2, cle),
+        ]
+
+    def _incoherences_from_audit(self, session, traite_id) -> list[str]:
+        entry = session.scalar(
+            select(AuditLogEntry).where(AuditLogEntry.traite_id == traite_id, AuditLogEntry.action == "analyse_terminee")
+        )
+        return entry.details["incoherences"]
+
+    def test_agreeing_readings_produce_no_inconsistency_and_use_the_confirmed_rib(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                *self._rib_pair(RIB_DEB_1001),
+                *self._subfield_pairs("11", "003", "0002917001788", "36"),  # reconstructs to RIB_DEB_1001
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert "rib_tire_vs_reconstitution_4_segments" not in self._incoherences_from_audit(db_session, traite.id)
+        assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+        assert result.code_debiteur == "DEB-1001"
+
+    def test_disagreeing_readings_flag_an_inconsistency_and_block_auto_confirm(self, db_session, tmp_path):
+        """Even though the name corroboration would otherwise be perfect,
+        two disagreeing RIB readings must still block auto-confirm — same
+        seriousness as any other duplicated-field écart."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                *self._rib_pair(RIB_DEB_1001),
+                *self._subfield_pairs("22", "222", "1111111111111", "22"),  # a different 20-digit RIB entirely
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert "rib_tire_vs_reconstitution_4_segments" in self._incoherences_from_audit(db_session, traite.id)
+        assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+
+    def test_only_reconstructed_rib_exploitable_is_used_alone_without_false_disagreement(self, db_session, tmp_path):
+        """rib_tire's own dedicated box illegible on this scan — the
+        reconstructed RIB alone is still acceptable, not discarded as a
+        "disagreement" against nothing."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                FieldCandidate(CHAMP_RIB_TIRE, 1, None),
+                FieldCandidate(CHAMP_RIB_TIRE, 2, None),
+                *self._subfield_pairs("11", "003", "0002917001788", "36"),  # reconstructs to RIB_DEB_1001
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert "rib_tire_vs_reconstitution_4_segments" not in self._incoherences_from_audit(db_session, traite.id)
+        assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+        assert result.code_debiteur == "DEB-1001"
 
 
 def test_known_fields_land_in_champs_extraits_correctly(db_session, tmp_path):
@@ -484,3 +587,28 @@ class TestParseHelpers:
 
     def test_canonicalize_rib_none_returns_none(self):
         assert _canonicalize_rib(None) is None
+
+    def test_reconstruct_rib_valid_segments(self):
+        assert reconstruct_rib("11", "003", "0002917001788", "36") == "11003000291700178836"
+
+    def test_reconstruct_rib_canonicalizes_each_segment_first(self):
+        # A box's own reading can carry the same formatting noise as any
+        # other RIB-shaped field — proven end to end against the real
+        # sample in this story's live validation, not just here.
+        assert reconstruct_rib("1 1", "0-0-3", "0002917001788", " 36 ") == "11003000291700178836"
+
+    def test_reconstruct_rib_wrong_length_code_etablissement_returns_none(self):
+        assert reconstruct_rib("111", "003", "0002917001788", "36") is None
+
+    def test_reconstruct_rib_wrong_length_code_agence_returns_none(self):
+        assert reconstruct_rib("11", "03", "0002917001788", "36") is None
+
+    def test_reconstruct_rib_wrong_length_numero_compte_returns_none(self):
+        assert reconstruct_rib("11", "003", "291700178836", "36") is None
+
+    def test_reconstruct_rib_wrong_length_cle_returns_none(self):
+        assert reconstruct_rib("11", "003", "0002917001788", "3") is None
+
+    def test_reconstruct_rib_missing_segment_returns_none(self):
+        assert reconstruct_rib("11", "003", None, "36") is None
+        assert reconstruct_rib(None, None, None, None) is None

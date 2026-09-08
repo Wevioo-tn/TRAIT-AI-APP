@@ -19,13 +19,18 @@ from openai import AzureOpenAI
 from app.core.config import Settings, get_settings
 from app.db.models.traite import Face, Traite
 from app.services.extraction import (
+    CHAMP_CLE_RIB,
+    CHAMP_CODE_AGENCE,
+    CHAMP_CODE_ETABLISSEMENT,
     CHAMP_DATE_CREATION,
     CHAMP_ECHEANCE,
     CHAMP_LIEU_CREATION,
     CHAMP_MONTANT_CHIFFRES,
     CHAMP_MONTANT_LETTRES,
+    CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
+    ROLE_DOMICILIATION,
     ROLE_ORDRE,
     ROLE_TIRE,
     ROLE_TIREUR,
@@ -46,6 +51,10 @@ _FIELDS_TO_EXTRACT = [
     CHAMP_ECHEANCE,
     CHAMP_DATE_CREATION,
     CHAMP_RIB_TIRE,
+    CHAMP_CODE_ETABLISSEMENT,
+    CHAMP_CODE_AGENCE,
+    CHAMP_NUMERO_COMPTE,
+    CHAMP_CLE_RIB,
     CHAMP_LIEU_CREATION,
 ]
 
@@ -57,22 +66,37 @@ Pour chacun des champs suivants, la traite peut porter DEUX occurrences visuelle
 - montant_lettres (montant écrit en toutes lettres)
 - echeance (date d'échéance, au format AAAA-MM-JJ si possible)
 - date_creation (date de création, au format AAAA-MM-JJ si possible)
-- rib_tire (RIB ou domiciliation bancaire du tiré)
+- rib_tire (RIB ou domiciliation bancaire du tiré, lu directement dans sa case dédiée "RIB ou RIP du Tiré")
 - lieu_creation (lieu de création)
+- code_etablissement (2 premiers chiffres du RIB du tiré, case dédiée "Code étab.")
+- code_agence (3 chiffres suivants du RIB du tiré, case dédiée "Code Agence")
+- numero_compte (13 chiffres suivants du RIB du tiré, case dédiée "N° de Compte")
+- cle_rib (2 derniers chiffres du RIB du tiré, case dédiée "Clé")
+
+Les 4 derniers champs ci-dessus (code_etablissement/code_agence/numero_compte/cle_rib)
+sont des cases séparées et distinctes de la case rib_tire elle-même — une
+seconde reconstitution indépendante du même RIB à 20 chiffres, pas une
+lecture redondante de la même case.
 
 Relève aussi, une seule fois chacun :
 - tireur_texte (nom de l'entreprise qui tire la traite, généralement en haut du recto)
 - tire_texte (nom de l'entreprise tirée / débitrice, dans la case "payez contre cette lettre de change à l'ordre de...")
 - ordre_texte (bénéficiaire de l'endossement au verso, généralement "à l'ordre de ...")
+- domiciliation_texte (nom et adresse de l'agence bancaire du tiré)
 
-ATTENTION — piège fréquent sur ces 3 derniers champs : le formulaire imprimé
-porte souvent, à l'intérieur ou à côté de la case elle-même, une légende
-statique du type "Nom ou raison sociale du tireur (vendeur)" ou "Nom et
-adresse du Tiré (acheteur)". Cette légende fait partie du gabarit imprimé,
-ce N'EST PAS une donnée renseignée. Si la case ne contient aucune écriture
-manuscrite ou dactylographiée distincte de cette légende, le champ est
-ABSENT : réponds `null`, ne recopie jamais le texte de la légende comme si
-c'était le nom réel.
+ATTENTION — piège fréquent sur tireur_texte / tire_texte / ordre_texte : le
+formulaire imprimé porte souvent, à l'intérieur ou à côté de la case
+elle-même, une légende statique du type "Nom ou raison sociale du tireur
+(vendeur)" ou "Nom et adresse du Tiré (acheteur)". Cette légende fait partie
+du gabarit imprimé, ce N'EST PAS une donnée renseignée. Si la case ne
+contient aucune écriture manuscrite ou dactylographiée distincte de cette
+légende, le champ est ABSENT : réponds `null`, ne recopie jamais le texte de
+la légende comme si c'était le nom réel.
+
+ATTENTION — piège distinct sur domiciliation_texte : le nom de l'agence
+bancaire (Domiciliation) peut déborder hors de sa case imprimée. Lis le
+texte même s'il chevauche la case voisine ; ne le tronque jamais à la
+largeur de sa case.
 
 Réponds UNIQUEMENT avec un objet JSON strictement de cette forme, sans texte autour, sans balises markdown :
 {
@@ -83,9 +107,14 @@ Réponds UNIQUEMENT avec un objet JSON strictement de cette forme, sans texte au
   "date_creation": {"occurrence_1": "...", "occurrence_2": "..."},
   "rib_tire": {"occurrence_1": "...", "occurrence_2": "..."},
   "lieu_creation": {"occurrence_1": "...", "occurrence_2": "..."},
+  "code_etablissement": {"occurrence_1": "...", "occurrence_2": "..."},
+  "code_agence": {"occurrence_1": "...", "occurrence_2": "..."},
+  "numero_compte": {"occurrence_1": "...", "occurrence_2": "..."},
+  "cle_rib": {"occurrence_1": "...", "occurrence_2": "..."},
   "tireur_texte": "...",
   "tire_texte": "...",
-  "ordre_texte": "..."
+  "ordre_texte": "...",
+  "domiciliation_texte": "..."
 }
 Utilise `null` (jamais une chaîne vide) pour tout champ illisible ou absent."""
 
@@ -209,6 +238,7 @@ class VlmExtractor:
             PartyCandidate(ROLE_TIREUR, data.get("tireur_texte")),
             PartyCandidate(ROLE_TIRE, data.get("tire_texte")),
             PartyCandidate(ROLE_ORDRE, data.get("ordre_texte")),
+            PartyCandidate(ROLE_DOMICILIATION, data.get("domiciliation_texte")),
         ]
         return ExtractionResult(fields=fields, parties=parties)
 

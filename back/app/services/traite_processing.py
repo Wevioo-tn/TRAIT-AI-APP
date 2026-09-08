@@ -31,9 +31,13 @@ from app.db.models.traite import (
     TraiteStatut,
 )
 from app.services.extraction import (
+    CHAMP_CLE_RIB,
+    CHAMP_CODE_AGENCE,
+    CHAMP_CODE_ETABLISSEMENT,
     CHAMP_DATE_CREATION,
     CHAMP_ECHEANCE,
     CHAMP_MONTANT_CHIFFRES,
+    CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
     ROLE_ORDRE,
@@ -119,6 +123,47 @@ def _coherent(values: list[str | None]) -> str | None:
     if len(values) != 2 or values[0] != values[1] or values[0] is None:
         return None
     return values[0]
+
+
+def _coherent_rib_part(by_field: dict[str, list[str | None]], field_name: str) -> str | None:
+    """Same 'two OCR occurrences agree' gate as every other duplicated
+    field (see _coherent), but canonicalized (digits only) first — a
+    RIB-shaped field can carry the same block-grouping noise (spaces,
+    hyphens) whether it's read from the single dedicated RIB box
+    (rib_tire) or from one of its 4 printed sub-fields, and that noise
+    shouldn't register as a false disagreement between two genuinely
+    identical readings."""
+    return _coherent([_canonicalize_rib(v) for v in by_field.get(field_name, [])])
+
+
+_INCOHERENCE_RIB_RECONSTITUE = "rib_tire_vs_reconstitution_4_segments"
+
+
+def reconstruct_rib(
+    code_etablissement: str | None,
+    code_agence: str | None,
+    numero_compte: str | None,
+    cle_rib: str | None,
+) -> str | None:
+    """Rebuilds a 20-digit RIB from its 4 separately printed sub-fields —
+    Code étab. (2 digits) / Code Agence (3) / N° de Compte (13) / Clé (2),
+    UC-01 étape 4 of the functional spec — the same way a human teller
+    reads them off 4 distinct boxes. Concatenates only when every segment
+    canonicalizes to exactly its expected length; any segment missing or
+    the wrong length after canonicalization returns None. A RIB guessed
+    from an incomplete or mis-lengthed segment would be exactly the kind
+    of partial reconstruction this project avoids everywhere else (see
+    _canonicalize_rib, _parse_montant)."""
+    segments = [
+        (code_etablissement, 2),
+        (code_agence, 3),
+        (numero_compte, 13),
+        (cle_rib, 2),
+    ]
+    canonical = [_canonicalize_rib(value) for value, _ in segments]
+    if any(value is None or len(value) != expected_len for value, (_, expected_len) in zip(canonical, segments)):
+        return None
+    return "".join(canonical)
 
 
 def _promote_canonical_identity(traite: Traite, by_field: dict[str, list[str | None]], session: Session) -> None:
@@ -233,7 +278,35 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
     # applies to numero_lcn/montant/dates. A near-identical-but-not-exact
     # RIB is not a match (see match_debiteur_by_rib) — it falls through to
     # the name-only path below exactly like no RIB at all.
-    rib = _coherent([_canonicalize_rib(v) for v in by_field.get(CHAMP_RIB_TIRE, [])])
+    #
+    # Two independent readings of the same 20-digit RIB feed this: the
+    # single dedicated "RIB ou RIP du Tiré" box (rib_tire), and the 4
+    # separately printed sub-fields reconstructed below (also UC-01, étape
+    # 4) — two different zones of the form, not the same box read twice.
+    rib_direct = _coherent_rib_part(by_field, CHAMP_RIB_TIRE)
+    rib_reconstitue = reconstruct_rib(
+        _coherent_rib_part(by_field, CHAMP_CODE_ETABLISSEMENT),
+        _coherent_rib_part(by_field, CHAMP_CODE_AGENCE),
+        _coherent_rib_part(by_field, CHAMP_NUMERO_COMPTE),
+        _coherent_rib_part(by_field, CHAMP_CLE_RIB),
+    )
+
+    if rib_direct is not None and rib_reconstitue is not None and rib_direct != rib_reconstitue:
+        # The two readings disagree — exactly as serious as any other
+        # duplicated-field écart (numero_lcn, montant, ...), so it joins
+        # the same inconsistencies list rather than a second, parallel
+        # blocking mechanism. Neither reading is trusted enough on its own
+        # to identify a débiteur here: picking one over the other would be
+        # exactly the kind of guess RIB-first matching exists to avoid.
+        inconsistencies.append(_INCOHERENCE_RIB_RECONSTITUE)
+        inconsistencies.sort()
+        rib = None
+    else:
+        # Either they agree (reconstructed from 2 independently-read
+        # zones — more reliable than a single box) or only one of the two
+        # is exploitable, which is still acceptable on its own.
+        rib = rib_reconstitue or rib_direct
+
     rib_match = match_debiteur_by_rib(rib, session) if rib else None
 
     homonym_threshold = get_settings().rib_corroboration_min_score

@@ -34,10 +34,24 @@ CHAMP_ECHEANCE = "echeance"
 CHAMP_RIB_TIRE = "rib_tire"
 CHAMP_LIEU_CREATION = "lieu_creation"
 CHAMP_DATE_CREATION = "date_creation"
+# UC-01, étape 4 of the functional spec: the RIB is also printed as 4
+# separate boxed sub-fields (Code étab. / Code Agence / N° de Compte /
+# Clé, 2+3+13+2 = 20 digits) distinct from the single dedicated "RIB ou
+# RIP du Tiré" box rib_tire already reads — see
+# app/services/traite_processing.py's reconstruct_rib.
+CHAMP_CODE_ETABLISSEMENT = "code_etablissement"
+CHAMP_CODE_AGENCE = "code_agence"
+CHAMP_NUMERO_COMPTE = "numero_compte"
+CHAMP_CLE_RIB = "cle_rib"
 
 ROLE_TIREUR = "tireur"
 ROLE_TIRE = "tire"
 ROLE_ORDRE = "ordre"
+# Bank agency name/address (Domiciliation) — free text, a single reading
+# (not a duplicated field like the ones above), same treatment as
+# tireur/tire/ordre. Not matched against any referential; kept purely as
+# scanned context.
+ROLE_DOMICILIATION = "domiciliation"
 
 
 @dataclass(frozen=True)
@@ -79,10 +93,12 @@ class StubExtractor:
         tireur_texte: str | None = None,
         tire_texte: str | None = None,
         ordre_texte: str | None = None,
+        domiciliation_texte: str | None = None,
     ) -> None:
         self._tireur_texte = tireur_texte
         self._tire_texte = tire_texte
         self._ordre_texte = ordre_texte
+        self._domiciliation_texte = domiciliation_texte
 
     def extract(self, traite: Traite, recto: bytes, verso: bytes) -> ExtractionResult:
         amount_str = f"{traite.montant:.3f}"
@@ -106,12 +122,17 @@ class StubExtractor:
             # rather than guessed.
             *_pair(CHAMP_RIB_TIRE, None),
             *_pair(CHAMP_LIEU_CREATION, None),
+            *_pair(CHAMP_CODE_ETABLISSEMENT, None),
+            *_pair(CHAMP_CODE_AGENCE, None),
+            *_pair(CHAMP_NUMERO_COMPTE, None),
+            *_pair(CHAMP_CLE_RIB, None),
         ]
 
         parties = [
             PartyCandidate(ROLE_TIREUR, self._tireur_texte),
             PartyCandidate(ROLE_TIRE, self._tire_texte),
             PartyCandidate(ROLE_ORDRE, self._ordre_texte),
+            PartyCandidate(ROLE_DOMICILIATION, self._domiciliation_texte),
         ]
 
         return ExtractionResult(fields=fields, parties=parties)

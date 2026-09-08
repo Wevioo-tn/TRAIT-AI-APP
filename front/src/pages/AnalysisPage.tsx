@@ -23,6 +23,13 @@ const CHAMP_LABELS: Record<string, string> = {
   date_creation: "Date de création",
   rib_tire: "RIB tiré",
   lieu_creation: "Lieu de création",
+  // The RIB's own 4 printed sub-fields (UC-01, étape 4) — a second,
+  // independent reconstruction of the same 20-digit RIB rib_tire reads
+  // directly, not a redundant re-listing of it.
+  code_etablissement: "Code établissement",
+  code_agence: "Code agence",
+  numero_compte: "N° de compte",
+  cle_rib: "Clé RIB",
 };
 
 // Not shown in the "Contrôle de cohérence des champs dupliqués" table (per
