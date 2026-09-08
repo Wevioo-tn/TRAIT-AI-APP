@@ -511,6 +511,69 @@ immediately, `en_cours` true then false, final statut
 `Écarts à traiter` (expected, `StubExtractor` has no party text to match)
 — then reverted `.env` and recreated `backend` again before committing.
 
+### ✅ Sprint 12 — First real accuracy pilot run + one prompt bug found live (done)
+**Per your call** — you provided a real recto/verso sample (a Tunisian
+Lettre de Change) and asked to run it through the real pipeline (real
+Azure OpenAI, `gpt-6-astra`) via `scripts/accuracy_pilot.py` rather than
+just discuss quality in the abstract. This is the first time that script
+has actually been run against real images since it was written in
+Sprint 8.
+
+**Real bug caught live, not shipped**: `accuracy_pilot.py` itself was
+stale — it unconditionally read `intake["numero_lcn"]`, but the intake
+form was made fully optional back when the queue screen's typed-in-fields
+were removed (see the Sprint 8/9 note above `_promote_canonical_identity`
+gets its values from OCR, not typed intake). Running the script with no
+`intake` key at all crashed with `KeyError: 'numero_lcn'` before a single
+extraction happened. Fixed: `intake` now defaults to `{}`, and the
+`-PILOT-<timestamp>` uniqueness suffix (needed to dodge the unique
+`numero_lcn` constraint across manifest reruns) is only applied when the
+sample actually supplies one — the server's own `AUTO-<uuid>` generator is
+already unique when it doesn't.
+
+**Real extraction bug caught live, not shipped**: with the script fixed,
+the first real run against the actual model showed `tireur_texte` and
+`tire_texte` both coming back as the literal printed form captions
+("Nom ou raison sociale du tireur (vendeur)", "Nom et adresse du Tiré
+(acheteur)") instead of `null` — the sample's tireur/tiré boxes had no
+handwritten company name, only the printed static label a real Lettre de
+Change form carries next to that box. The model treated the label as if
+it were the filled-in answer. This isn't specific to the one sample image
+— any real scan with an actually-blank party box would hit the same
+failure, silently poisoning the NLP match with garbage instead of
+correctly reporting the field absent. Fixed with an explicit guard in
+`_PROMPT` (`vlm_extraction.py`) naming this exact trap and instructing the
+model to return `null` when a box contains only the printed legend and no
+distinct handwriting/typing. Verified by re-running the same live sample
+twice more after the fix — both re-runs correctly returned empty
+`tireur`/`tire`/`ordre` instead of the caption text, with every other
+field (numero_lcn, montant, échéance, date de création, lieu de création)
+unchanged and still correct. All other fields on this sample read
+correctly on every run: `numero_lcn` (008857459455), both dates converted
+to ISO correctly, `lieu_creation` (Tunis), and a partially-redacted
+`rib_tire` honestly reported as absent rather than hallucinated.
+
+Also removed three leftover `print()` debug statements in
+`VlmExtractor.extract` from an earlier troubleshooting session (this
+project logs via `logger`, never bare `print`, everywhere else) — one of
+them was dumping the full base64-encoded image payload of every request
+into container logs on every single extraction call, which is both noisy
+and needless exposure of the raw image bytes in log output.
+
+**166/166 backend tests, twice, `ruff` clean.** No test suite change
+needed (no test asserts on the literal prompt string); validated the old
+*and* new prompt behavior against the real Azure OpenAI deployment itself,
+not a mock, per this project's standing discipline — a mocked
+`VlmExtractor` test could never have caught either of these two bugs.
+Sample images kept out of git (`back/pilot_samples/` is already
+gitignored, same as the real upload volume) since the verso is a genuine
+scan carrying a partial RIB/stamp/barcode.
+
+Accuracy is still not "measured" in the way `scripts/accuracy_pilot.py`
+implies it eventually should be (one sample, not a real ground-truth set)
+— but the pipeline no longer silently corrupts party names on the single
+most common real-world shape of "this field is legitimately blank."
+
 ## Backlog (not yet scheduled)
 
 - Party/entity unification (a company can be both an `adherent` and a

@@ -80,13 +80,19 @@ def _raw_extractions(traite_id: str) -> list[dict]:
 
 def _run_sample(client: httpx.Client, token: str, sample: dict, base_dir: Path) -> dict:
     headers = {"Authorization": f"Bearer {token}"}
-    intake = sample["intake"]
-    numero_lcn = f"{intake['numero_lcn']}-PILOT-{int(time.time())}"
+    intake = sample.get("intake") or {}
+    # All four intake fields are optional (the queue screen no longer
+    # collects them — see schemas/traite.py's TraiteCreate). A "-PILOT-"
+    # suffix is only needed to dodge the unique numero_lcn constraint on
+    # reruns of the *same* manifest; when the sample doesn't supply one at
+    # all, the server's own AUTO-<uuid> generator is already unique.
+    if "numero_lcn" in intake:
+        intake = {**intake, "numero_lcn": f"{intake['numero_lcn']}-PILOT-{int(time.time())}"}
 
     create_resp = client.post(
         f"{API_BASE}/traites",
         headers=headers,
-        json={**intake, "numero_lcn": numero_lcn},
+        json=intake,
     )
     create_resp.raise_for_status()
     traite_id = create_resp.json()["id"]

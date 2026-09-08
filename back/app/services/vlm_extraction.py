@@ -65,6 +65,15 @@ Relève aussi, une seule fois chacun :
 - tire_texte (nom de l'entreprise tirée / débitrice, dans la case "payez contre cette lettre de change à l'ordre de...")
 - ordre_texte (bénéficiaire de l'endossement au verso, généralement "à l'ordre de ...")
 
+ATTENTION — piège fréquent sur ces 3 derniers champs : le formulaire imprimé
+porte souvent, à l'intérieur ou à côté de la case elle-même, une légende
+statique du type "Nom ou raison sociale du tireur (vendeur)" ou "Nom et
+adresse du Tiré (acheteur)". Cette légende fait partie du gabarit imprimé,
+ce N'EST PAS une donnée renseignée. Si la case ne contient aucune écriture
+manuscrite ou dactylographiée distincte de cette légende, le champ est
+ABSENT : réponds `null`, ne recopie jamais le texte de la légende comme si
+c'était le nom réel.
+
 Réponds UNIQUEMENT avec un objet JSON strictement de cette forme, sans texte autour, sans balises markdown :
 {
   "numero_lcn": {"occurrence_1": "...", "occurrence_2": "..."},
@@ -137,7 +146,6 @@ class VlmExtractor:
         stopwatch = Stopwatch()
         content: str | None = None
         try:
-            print(f"VLM extraction for traite {traite.id} using provider azure_openai and model {self._model}")
             message_content = [
                 {"type": "text", "text": _PROMPT},
                 {"type": "text", "text": "Recto :"},
@@ -161,10 +169,8 @@ class VlmExtractor:
                     }
                 ],
             )
-            print(f"messages content: {message_content}")
             content = response.choices[0].message.content or ""
             data = _parse_json_response(content)
-            print(f"data: {data}")
         except Exception as exc:
             # Logged here — the raw response the model actually gave, not
             # just the exception message — because *why* extraction failed
