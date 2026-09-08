@@ -50,6 +50,8 @@ function baseTraite(overrides: Partial<TraiteDetail> = {}): TraiteDetail {
         score: "100.00",
         code_adherent_matche: "ADH-1001",
         code_debiteur_matche: null,
+        methode_identification: "nom_seul",
+        alerte_ecart_nom: false,
       },
     ],
     verifications_manuelles: [
@@ -190,6 +192,62 @@ describe("AnalysisPage", () => {
     await waitFor(() => expect(mockedApi.getDocumentBlob).toHaveBeenCalledWith("t1", "recto"));
     const image = await screen.findByAltText("recto de la traite");
     expect(image).toHaveAttribute("src", "blob:mock-url");
+  });
+
+  it("shows how each NLP match was identified — via RIB vs name-only", async () => {
+    const traite = baseTraite({
+      rapprochements_nlp: [
+        {
+          id: "n1",
+          role: "tire",
+          valeur_scan: "LA MÉDITERRANÉENNE",
+          valeur_referentiel: "LA MÉDITERRANÉENNE",
+          score: "97.00",
+          code_adherent_matche: null,
+          code_debiteur_matche: "DEB-1001",
+          methode_identification: "rib",
+          alerte_ecart_nom: false,
+        },
+        {
+          id: "n2",
+          role: "tireur",
+          valeur_scan: "ADACTIM",
+          valeur_referentiel: "ADACTIM",
+          score: "100.00",
+          code_adherent_matche: "ADH-1001",
+          code_debiteur_matche: null,
+          methode_identification: "nom_seul",
+          alerte_ecart_nom: false,
+        },
+      ],
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText("Identifié par RIB")).toBeInTheDocument();
+    expect(screen.getByText("Nom seul — à confirmer")).toBeInTheDocument();
+  });
+
+  it("flags a RIB-confirmed débiteur whose scanned name doesn't corroborate", async () => {
+    const traite = baseTraite({
+      rapprochements_nlp: [
+        {
+          id: "n1",
+          role: "tire",
+          valeur_scan: "SPG",
+          valeur_referentiel: "LA MÉDITERRANÉENNE",
+          score: "12.00",
+          code_adherent_matche: null,
+          code_debiteur_matche: "DEB-1001",
+          methode_identification: "rib",
+          alerte_ecart_nom: true,
+        },
+      ],
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText(/RIB confirmé mais nom incohérent/)).toBeInTheDocument();
   });
 
   it("shows recto and verso stacked, always both visible, with no face-switching tab", async () => {

@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # which a tireur/tiré reconciliation counts as automatically confirmed.
     nlp_match_threshold: float = 95.0
 
+    # Below this score, a débiteur already identified with certainty by RIB
+    # (see app/services/nlp_matching.py's match_debiteur_by_rib) has a
+    # scanned party name that looks nothing like that débiteur's real
+    # raison_sociale — a possible wrong-document/homonym mismatch worth a
+    # human's attention. Deliberately never used to override or reject the
+    # RIB match itself (that's a hard key from the bank instrument); only to
+    # flag the écart explicitly instead of silently ignoring it.
+    rib_corroboration_min_score: float = 50.0
+
     # Browsers enforce CORS, curl doesn't — every earlier "live smoke test"
     # in this project used curl and would have missed a missing CORS
     # config entirely. Caught live via an actual browser (Playwright) in

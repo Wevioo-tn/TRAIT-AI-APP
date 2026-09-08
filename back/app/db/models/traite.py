@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -48,6 +48,18 @@ class RoleNlp(str, enum.Enum):
     TIREUR = "tireur"
     TIRE = "tire"
     ORDRE = "ordre"
+
+
+class MethodeIdentification(str, enum.Enum):
+    """How a RapprochementNlp row's code_*_matche was actually resolved —
+    surfaced to the reviewer (see AnalysisPage's "Rapprochement NLP" panel)
+    so they know whether they're confirming a hard key (a hit against
+    imx.debiteurs.rib, unique in the database) or a fuzzy name guess that
+    still needs a human to actually confirm it. See
+    app/services/traite_processing.py / nlp_matching.py."""
+
+    RIB = "rib"
+    NOM_SEUL = "nom_seul"
 
 
 class VerificationCode(str, enum.Enum):
@@ -174,6 +186,19 @@ class RapprochementNlp(Base):
     score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     code_adherent_matche: Mapped[str | None] = mapped_column(ForeignKey(Adherent.code_adherent))
     code_debiteur_matche: Mapped[str | None] = mapped_column(ForeignKey(Debiteur.code_debiteur))
+    # Defaults to NOM_SEUL: the conservative assumption ("this still needs
+    # human confirmation") for the one role (ordre) that's never RIB-backed
+    # and for any row a caller doesn't set this on explicitly.
+    methode_identification: Mapped[MethodeIdentification] = mapped_column(
+        SAEnum(MethodeIdentification, name="methode_identification"),
+        nullable=False,
+        default=MethodeIdentification.NOM_SEUL,
+        server_default=MethodeIdentification.NOM_SEUL.name,
+    )
+    # True only when a RIB-matched débiteur's scanned name corroboration
+    # score came back suspiciously low (see Settings.rib_corroboration_min_score)
+    # — an explicit, visible écart, never silently swallowed.
+    alerte_ecart_nom: Mapped[bool] = mapped_column(nullable=False, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     traite: Mapped[Traite] = relationship(back_populates="rapprochements_nlp")

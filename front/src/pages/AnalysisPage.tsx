@@ -533,30 +533,70 @@ function NlpCard({ traite }: { traite: TraiteDetail }) {
       {traite.rapprochements_nlp.map((n) => {
         const score = Number(n.score);
         const ok = score >= 95;
+        const viaRib = n.methode_identification === "rib";
         return (
-          <div key={n.id} style={{ padding: "11px 14px", borderBottom: `1px solid ${colors.dividerLight}`, display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted, width: 44 }}>{n.role}</span>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
-              <span style={{ fontSize: 12 }}>
-                <b>{n.valeur_scan || "—"}</b> <span style={{ color: "#8B9AA8" }}>↔</span> {n.valeur_referentiel ?? "aucune correspondance"}
-              </span>
-              <div style={{ height: 5, borderRadius: 3, background: colors.divider, overflow: "hidden", maxWidth: 240 }}>
-                <div style={{ width: `${Math.min(100, score)}%`, height: "100%", background: ok ? colors.green : colors.orange }} />
+          <div key={n.id} style={{ padding: "11px 14px", borderBottom: `1px solid ${colors.dividerLight}`, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted, width: 44 }}>{n.role}</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
+                <span style={{ fontSize: 12 }}>
+                  <b>{n.valeur_scan || "—"}</b> <span style={{ color: "#8B9AA8" }}>↔</span> {n.valeur_referentiel ?? "aucune correspondance"}
+                </span>
+                <div style={{ height: 5, borderRadius: 3, background: colors.divider, overflow: "hidden", maxWidth: 240 }}>
+                  <div style={{ width: `${Math.min(100, score)}%`, height: "100%", background: ok ? colors.green : colors.orange }} />
+                </div>
               </div>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "2px 8px",
+                  borderRadius: 11,
+                  color: ok ? colors.greenText : colors.orangeText,
+                  background: ok ? colors.greenBg : colors.orangeBg,
+                  border: `1px solid ${ok ? colors.greenBorder : colors.orangeBorder}`,
+                }}
+              >
+                {score.toFixed(0)} %
+              </span>
             </div>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                padding: "2px 8px",
-                borderRadius: 11,
-                color: ok ? colors.greenText : colors.orangeText,
-                background: ok ? colors.greenBg : colors.orangeBg,
-                border: `1px solid ${ok ? colors.greenBorder : colors.orangeBorder}`,
-              }}
-            >
-              {score.toFixed(0)} %
-            </span>
+            {/* A reviewer must know whether they're confirming a hard key
+                (a RIB hit, unique in imx.debiteurs) or a fuzzy name guess
+                that still needs manual confirmation — a bare score can't
+                tell them that (see BACKLOG.md's RIB-first identification
+                story). */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 56 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: "1px 7px",
+                  borderRadius: 9,
+                  whiteSpace: "nowrap",
+                  color: viaRib ? colors.greenText : colors.orangeText,
+                  background: viaRib ? colors.greenBg : colors.orangeBg,
+                  border: `1px solid ${viaRib ? colors.greenBorder : colors.orangeBorder}`,
+                }}
+              >
+                {viaRib ? "Identifié par RIB" : "Nom seul — à confirmer"}
+              </span>
+              {n.alerte_ecart_nom && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: "1px 7px",
+                    borderRadius: 9,
+                    whiteSpace: "nowrap",
+                    color: colors.redText,
+                    background: colors.redBg,
+                    border: `1px solid ${colors.redBorder}`,
+                  }}
+                >
+                  ⚑ RIB confirmé mais nom incohérent
+                </span>
+              )}
+            </div>
           </div>
         );
       })}

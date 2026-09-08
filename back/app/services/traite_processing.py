@@ -22,6 +22,7 @@ from app.db.models.traite import (
     AuditLogEntry,
     ChampExtrait,
     Face,
+    MethodeIdentification,
     RapprochementNlp,
     RoleNlp,
     SourceChamp,
@@ -34,12 +35,13 @@ from app.services.extraction import (
     CHAMP_ECHEANCE,
     CHAMP_MONTANT_CHIFFRES,
     CHAMP_NUMERO_LCN,
+    CHAMP_RIB_TIRE,
     ROLE_ORDRE,
     ROLE_TIRE,
     ROLE_TIREUR,
     Extractor,
 )
-from app.services.nlp_matching import best_match
+from app.services.nlp_matching import best_match, match_debiteur_by_rib
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,30 @@ def _parse_date(text: str) -> date | None:
     return None
 
 
+def _canonicalize_rib(text: str | None) -> str | None:
+    """Keeps digits only — same defensive posture as _parse_montant/
+    _parse_date: a RIB read off a scan carries whatever block-grouping the
+    document itself prints (spaces or hyphens between the établissement/
+    agence/compte/clé segments). Returns None for anything with no digits
+    at all, never raises."""
+    if text is None:
+        return None
+    digits = re.sub(r"\D", "", text)
+    return digits or None
+
+
+def _coherent(values: list[str | None]) -> str | None:
+    """Two OCR occurrences of the same field agree on a real value: exactly
+    two readings, equal, and not None. Both-None or a single reading isn't
+    "coherent" here, it's "nothing usable" — an incoherent/partial field is
+    already flagged as an écart for manual review elsewhere; promoting or
+    trusting one of two disagreeing (or absent) readings would be
+    arbitrary, not authoritative."""
+    if len(values) != 2 or values[0] != values[1] or values[0] is None:
+        return None
+    return values[0]
+
+
 def _promote_canonical_identity(traite: Traite, by_field: dict[str, list[str | None]], session: Session) -> None:
     """Once extraction succeeds, its readings become the traite's own
     numero_lcn/montant/date_echeance/date_creation_traite — closing the
@@ -108,13 +134,7 @@ def _promote_canonical_identity(traite: Traite, by_field: dict[str, list[str | N
     the pipeline, the same "honest fallback" discipline as an outright
     extraction failure."""
 
-    def _coherent_value(nom_champ: str) -> str | None:
-        values = by_field.get(nom_champ, [])
-        if len(values) != 2 or values[0] != values[1] or values[0] is None:
-            return None
-        return values[0]
-
-    numero_lcn = _coherent_value(CHAMP_NUMERO_LCN)
+    numero_lcn = _coherent(by_field.get(CHAMP_NUMERO_LCN, []))
     if numero_lcn is not None:
         numero_lcn = numero_lcn.strip()
     if numero_lcn and len(numero_lcn) <= 20:
@@ -131,17 +151,17 @@ def _promote_canonical_identity(traite: Traite, by_field: dict[str, list[str | N
                 collision,
             )
 
-    montant_text = _coherent_value(CHAMP_MONTANT_CHIFFRES)
+    montant_text = _coherent(by_field.get(CHAMP_MONTANT_CHIFFRES, []))
     montant = _parse_montant(montant_text) if montant_text is not None else None
     if montant is not None and 0 < montant < _MAX_MONTANT:
         traite.montant = montant
 
-    echeance_text = _coherent_value(CHAMP_ECHEANCE)
+    echeance_text = _coherent(by_field.get(CHAMP_ECHEANCE, []))
     echeance = _parse_date(echeance_text) if echeance_text is not None else None
     if echeance is not None:
         traite.date_echeance = echeance
 
-    date_creation_text = _coherent_value(CHAMP_DATE_CREATION)
+    date_creation_text = _coherent(by_field.get(CHAMP_DATE_CREATION, []))
     date_creation_traite = _parse_date(date_creation_text) if date_creation_text is not None else None
     if date_creation_traite is not None:
         traite.date_creation_traite = date_creation_traite
@@ -205,18 +225,73 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
 
     adherents = session.scalars(select(Adherent)).all()
     debiteurs = session.scalars(select(Debiteur)).all()
+    adherents_by_code = {a.code_adherent: a for a in adherents}
 
-    drawer_match = best_match(drawer_text, [(a.code_adherent, a.raison_sociale) for a in adherents])
-    drawee_match = best_match(drawee_text, [(d.code_debiteur, d.raison_sociale) for d in debiteurs])
+    # RIB first (UC-01, étape 4 of the functional spec: "Vérifier RIB 20
+    # chiffres = RIB IMX débiteur") — only when both OCR occurrences of the
+    # RIB agree, same "coherent" gate _promote_canonical_identity already
+    # applies to numero_lcn/montant/dates. A near-identical-but-not-exact
+    # RIB is not a match (see match_debiteur_by_rib) — it falls through to
+    # the name-only path below exactly like no RIB at all.
+    rib = _coherent([_canonicalize_rib(v) for v in by_field.get(CHAMP_RIB_TIRE, [])])
+    rib_match = match_debiteur_by_rib(rib, session) if rib else None
+
+    homonym_threshold = get_settings().rib_corroboration_min_score
+
+    if rib_match is not None and rib_match.code_debiteur is not None:
+        # The débiteur is certain — the RIB is a hard key, unique in
+        # imx.debiteurs. From here, comparing names is corroboration, not
+        # identification: it can flag a mismatch worth a human's attention,
+        # but it never decides who the débiteur is (that already happened),
+        # and it's a single comparison against *this* débiteur, never a
+        # search across the whole table.
+        code_debiteur = rib_match.code_debiteur
+        drawee_corrob = best_match(drawee_text, [(code_debiteur, rib_match.reference_value)])
+        drawee_score, drawee_reference, drawee_method = (
+            drawee_corrob.score,
+            drawee_corrob.reference_value,
+            MethodeIdentification.RIB,
+        )
+        drawee_alert = drawee_score < homonym_threshold
+
+        # code_adherent comes only from the débiteur's own FK — deliberately
+        # not independently fuzzy-searched. Doing that here would reimport
+        # exactly the "guess by name similarity" risk the RIB path exists to
+        # remove; if IMX itself doesn't link this débiteur to an adhérent,
+        # the adhérent is honestly unresolved, not guessed.
+        code_adherent = rib_match.code_adherent
+        adherent = adherents_by_code.get(code_adherent) if code_adherent else None
+        if adherent is not None:
+            drawer_corrob = best_match(drawer_text, [(code_adherent, adherent.raison_sociale)])
+            drawer_score, drawer_reference = drawer_corrob.score, drawer_corrob.reference_value
+        else:
+            drawer_score, drawer_reference = 0.0, None
+        drawer_method = MethodeIdentification.RIB
+        drawer_alert = False
+    else:
+        # No exploitable RIB (illisible, occurrences en désaccord, ou
+        # aucun débiteur ne le porte) — today's full-table fuzzy fallback.
+        # Per design: a name-only match, however high its score, can never
+        # by itself put a traite in CONTROLE_MANUEL_REQUIS (see below) —
+        # it's a lead for a human to confirm, never an identification.
+        drawer_match = best_match(drawer_text, [(a.code_adherent, a.raison_sociale) for a in adherents])
+        drawee_match = best_match(drawee_text, [(d.code_debiteur, d.raison_sociale) for d in debiteurs])
+        code_debiteur, code_adherent = drawee_match.code, drawer_match.code
+        drawee_score, drawee_reference = drawee_match.score, drawee_match.reference_value
+        drawer_score, drawer_reference = drawer_match.score, drawer_match.reference_value
+        drawee_method = drawer_method = MethodeIdentification.NOM_SEUL
+        drawee_alert = drawer_alert = False
 
     session.add(
         RapprochementNlp(
             traite_id=traite_id,
             role=RoleNlp.TIREUR,
             valeur_scan=drawer_text or "",
-            valeur_referentiel=drawer_match.reference_value,
-            score=drawer_match.score,
-            code_adherent_matche=drawer_match.code,
+            valeur_referentiel=drawer_reference,
+            score=drawer_score,
+            code_adherent_matche=code_adherent,
+            methode_identification=drawer_method,
+            alerte_ecart_nom=drawer_alert,
         )
     )
     session.add(
@@ -224,14 +299,17 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
             traite_id=traite_id,
             role=RoleNlp.TIRE,
             valeur_scan=drawee_text or "",
-            valeur_referentiel=drawee_match.reference_value,
-            score=drawee_match.score,
-            code_debiteur_matche=drawee_match.code,
+            valeur_referentiel=drawee_reference,
+            score=drawee_score,
+            code_debiteur_matche=code_debiteur,
+            methode_identification=drawee_method,
+            alerte_ecart_nom=drawee_alert,
         )
     )
     # "Ordre" (bénéficiaire déclaré) isn't matched against a referential —
     # validating it needs a contracts data model this project doesn't have.
-    # Recorded as scanned text only, for now.
+    # Recorded as scanned text only, for now (methode_identification stays
+    # its NOM_SEUL default — never resolved by any hard key).
     session.add(
         RapprochementNlp(
             traite_id=traite_id,
@@ -242,12 +320,39 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
         )
     )
 
-    traite.code_adherent = drawer_match.code
-    traite.code_debiteur = drawee_match.code
+    traite.code_adherent = code_adherent
+    traite.code_debiteur = code_debiteur
 
-    threshold = get_settings().nlp_match_threshold
-    clean = not inconsistencies and drawer_match.score >= threshold and drawee_match.score >= threshold
+    # Auto-confirm requires a débiteur identified by RIB (a hard key), a
+    # corroborating name that isn't a homonym alert, an adhérent actually
+    # resolved (via the FK above), and no duplicated-field inconsistency.
+    # A name-only identification, at any score, never qualifies — see
+    # "Repli nom-seul" in this story's own task description.
+    clean = (
+        not inconsistencies
+        and drawee_method == MethodeIdentification.RIB
+        and not drawee_alert
+        and code_adherent is not None
+    )
     traite.statut = TraiteStatut.CONTROLE_MANUEL_REQUIS if clean else TraiteStatut.ECARTS_A_TRAITER
+
+    if drawee_alert:
+        # Surfaced explicitly, not just via the boolean flag on the row
+        # above — a reviewer scanning the audit log for this traite must
+        # see the RIB/nom incohérence too, not just the two panels.
+        session.add(
+            AuditLogEntry(
+                traite_id=traite_id,
+                utilisateur="system",
+                action="ecart_rib_nom",
+                details={
+                    "code_debiteur": code_debiteur,
+                    "nom_referentiel": drawee_reference,
+                    "nom_scanne": drawee_text,
+                    "score_corroboration": drawee_score,
+                },
+            )
+        )
 
     session.add(
         AuditLogEntry(
@@ -256,8 +361,9 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
             action="analyse_terminee",
             details={
                 "incoherences": inconsistencies,
-                "score_tireur": drawer_match.score,
-                "score_tire": drawee_match.score,
+                "score_tireur": drawer_score,
+                "score_tire": drawee_score,
+                "methode_identification_tire": drawee_method.value,
                 "statut": traite.statut.value,
             },
         )

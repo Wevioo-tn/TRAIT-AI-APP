@@ -83,6 +83,14 @@ def test_traites_unique_numero_lcn(sync_engine):
     assert any("numero_lcn" in u["column_names"] for u in uniques)
 
 
+def test_rapprochements_nlp_has_identification_method_columns(sync_engine):
+    """RIB-first identification story: rapprochements_nlp records how each
+    role was actually resolved, not just a bare score."""
+    inspector = inspect(sync_engine)
+    columns = {c["name"] for c in inspector.get_columns("rapprochements_nlp")}
+    assert {"methode_identification", "alerte_ecart_nom"} <= columns
+
+
 def test_verifications_manuelles_unique_per_traite_and_code(sync_engine):
     inspector = inspect(sync_engine)
     uniques = inspector.get_unique_constraints("verifications_manuelles")

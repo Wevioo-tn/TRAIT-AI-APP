@@ -14,6 +14,7 @@ from app.db.models.traite import (
     AuditLogEntry,
     ChampExtrait,
     Face,
+    MethodeIdentification,
     RapprochementNlp,
     RoleNlp,
     Traite,
@@ -27,11 +28,15 @@ from app.services.extraction import (
     CHAMP_ECHEANCE,
     CHAMP_MONTANT_CHIFFRES,
     CHAMP_NUMERO_LCN,
+    CHAMP_RIB_TIRE,
+    ROLE_TIRE,
+    ROLE_TIREUR,
     ExtractionResult,
     FieldCandidate,
+    PartyCandidate,
     StubExtractor,
 )
-from app.services.traite_processing import _parse_date, _parse_montant, execute_analysis
+from app.services.traite_processing import _canonicalize_rib, _parse_date, _parse_montant, execute_analysis
 
 
 class _BrokenExtractor:
@@ -44,16 +49,19 @@ class _BrokenExtractor:
 
 
 class _FakeExtractor:
-    """Returns exactly the field candidates given to it — used to exercise
-    canonical-identity promotion with values deliberately different from
-    what's already on the traite (StubExtractor always echoes those back,
-    which can't prove a real promotion happened)."""
+    """Returns exactly the field/party candidates given to it — used to
+    exercise canonical-identity promotion and RIB-first matching with
+    values deliberately different from what's already on the traite
+    (StubExtractor always echoes traite fields back and never emits a RIB
+    or party text, neither of which can prove real promotion/matching
+    happened)."""
 
-    def __init__(self, fields: list[FieldCandidate]) -> None:
+    def __init__(self, fields: list[FieldCandidate], parties: list[PartyCandidate] | None = None) -> None:
         self._fields = fields
+        self._parties = parties or []
 
     def extract(self, traite, recto, verso) -> ExtractionResult:
-        return ExtractionResult(fields=self._fields, parties=[])
+        return ExtractionResult(fields=self._fields, parties=self._parties)
 
 
 def _make_traite_with_documents(session, tmp_path, *, numero_lcn="011570763437") -> Traite:
@@ -87,9 +95,19 @@ def _make_traite_with_documents(session, tmp_path, *, numero_lcn="011570763437")
     return traite
 
 
+RIB_DEB_1001 = "11003000291700178836"
+
+
 def _seed_referential(session) -> None:
     session.add(Adherent(code_adherent="ADH-1001", raison_sociale="ADACTIM", statut_contrat=StatutContrat.ACTIF))
-    session.add(Debiteur(code_debiteur="DEB-1001", raison_sociale="LA MÉDITERRANÉENNE", rib="11003000291700178836"))
+    session.add(
+        Debiteur(
+            code_debiteur="DEB-1001",
+            raison_sociale="LA MÉDITERRANÉENNE",
+            rib=RIB_DEB_1001,
+            code_adherent="ADH-1001",  # matches real seed.py — needed for RIB-first tests to resolve the adhérent
+        )
+    )
     session.flush()
 
 
@@ -107,14 +125,19 @@ def test_missing_document_raises(db_session):
         execute_analysis(traite.id, db_session, StubExtractor())
 
 
-def test_clean_analysis_with_matching_parties_yields_controle_manuel_requis(db_session, tmp_path):
+def test_name_only_match_never_yields_controle_manuel_requis_even_at_100_score(db_session, tmp_path):
+    """The main behavior change of the RIB-first story: without an
+    exploitable RIB, a name-only match — however perfect its score — is a
+    lead for a human to confirm, never an identification. Before this
+    story, a 100%/95%+ name match alone used to resolve straight to
+    CONTROLE_MANUEL_REQUIS; it must not any more."""
     traite = _make_traite_with_documents(db_session, tmp_path)
     _seed_referential(db_session)
 
     extractor = StubExtractor(tireur_texte="ADACTIM", tire_texte="LA MÉDITERRANÉENNE")
     result = execute_analysis(traite.id, db_session, extractor)
 
-    assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+    assert result.statut == TraiteStatut.ECARTS_A_TRAITER
     assert result.code_adherent == "ADH-1001"
     assert result.code_debiteur == "DEB-1001"
     # The display-name properties the queue list depends on.
@@ -127,8 +150,138 @@ def test_clean_analysis_with_matching_parties_yields_controle_manuel_requis(db_s
     nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
     by_role = {n.role: n for n in nlp}
     assert by_role[RoleNlp.TIREUR].score == 100.0
+    assert by_role[RoleNlp.TIREUR].methode_identification == MethodeIdentification.NOM_SEUL
     assert by_role[RoleNlp.TIRE].score >= 95.0
+    assert by_role[RoleNlp.TIRE].methode_identification == MethodeIdentification.NOM_SEUL
     assert RoleNlp.ORDRE in by_role
+
+
+class TestRibFirstIdentification:
+    """RIB-first débiteur identification (UC-01, étape 4): the RIB, not the
+    name, decides who the débiteur is; name comparison only ever
+    corroborates a RIB match already made, and — the flip side — can never
+    on its own produce an auto-confirm."""
+
+    def _rib_pair(self, rib: str) -> list[FieldCandidate]:
+        return [FieldCandidate(CHAMP_RIB_TIRE, 1, rib), FieldCandidate(CHAMP_RIB_TIRE, 2, rib)]
+
+    def test_rib_match_with_corroborating_name_yields_controle_manuel_requis(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=self._rib_pair("11 003 000 2917 0017 8836"),  # spaced — proves canonicalization runs end to end
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+        assert result.code_debiteur == "DEB-1001"
+        assert result.code_adherent == "ADH-1001"  # derived from the FK, not independently searched
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        by_role = {n.role: n for n in nlp}
+        assert by_role[RoleNlp.TIRE].methode_identification == MethodeIdentification.RIB
+        assert by_role[RoleNlp.TIRE].alerte_ecart_nom is False
+        assert by_role[RoleNlp.TIREUR].methode_identification == MethodeIdentification.RIB
+
+    def test_incoherent_rib_occurrences_falls_back_to_name_only_and_never_auto_confirms(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                FieldCandidate(CHAMP_RIB_TIRE, 1, RIB_DEB_1001),
+                FieldCandidate(CHAMP_RIB_TIRE, 2, "00000000000000000000"),  # disagrees with occurrence 1
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        # Falls back to name-only — which, however good the score, can
+        # never by itself auto-confirm (same rule as the no-RIB-at-all case).
+        assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        by_role = {n.role: n for n in nlp}
+        assert by_role[RoleNlp.TIRE].methode_identification == MethodeIdentification.NOM_SEUL
+
+    def test_rib_match_with_low_name_corroboration_flags_ecart_and_blocks_auto_confirm(self, db_session, tmp_path):
+        """The RIB still identifies the débiteur with certainty — but a
+        name that looks nothing like it is a real écart worth a human's
+        attention, not something to auto-confirm past."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=self._rib_pair(RIB_DEB_1001),
+            parties=[PartyCandidate(ROLE_TIRE, "SPG")],  # unrelated to "LA MÉDITERRANÉENNE"
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+        assert result.code_debiteur == "DEB-1001"  # RIB still identifies the débiteur
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        tire_row = next(n for n in nlp if n.role == RoleNlp.TIRE)
+        assert tire_row.methode_identification == MethodeIdentification.RIB
+        assert tire_row.alerte_ecart_nom is True
+
+        entries = db_session.scalars(
+            select(AuditLogEntry).where(AuditLogEntry.traite_id == traite.id, AuditLogEntry.action == "ecart_rib_nom")
+        ).all()
+        assert len(entries) == 1
+        assert entries[0].details["code_debiteur"] == "DEB-1001"
+
+    def test_rib_identifies_correct_debiteur_despite_near_identical_homonym_in_referential(self, db_session, tmp_path):
+        """Regression fixture, built directly here rather than depended on
+        scripts/seed.py's current state (that pairing no longer exists
+        there since Sprint 13): two legally distinct débiteurs with
+        near-identical names and different RIBs — a real case already hit
+        in this project. Name-only matching could plausibly confuse them;
+        RIB cannot, because RIBs are exact and different."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        db_session.add(Adherent(code_adherent="ADH-2001", raison_sociale="ADACTIM", statut_contrat=StatutContrat.ACTIF))
+        db_session.add(
+            Debiteur(
+                code_debiteur="DEB-2001",
+                raison_sociale="LA MEDITERRANEENNE",
+                rib="10000000000000000001",
+                code_adherent="ADH-2001",
+            )
+        )
+        db_session.add(
+            Debiteur(
+                code_debiteur="DEB-2002",
+                raison_sociale="LA MÉDITERRANÉENNE",
+                rib="10000000000000000002",
+                code_adherent="ADH-2001",
+            )
+        )
+        db_session.flush()
+
+        extractor = _FakeExtractor(
+            fields=self._rib_pair("1000 0000 0000 0000 0002"),  # canonicalizes to DEB-2002's real RIB
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MEDITERRANEENNE"),  # the *other*, wrong-but-similar débiteur's name
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert result.code_debiteur == "DEB-2002"  # RIB-identified, not the accented near-homonym DEB-2001
+        assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS  # accent-only mismatch, still well above the alert threshold
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        tire_row = next(n for n in nlp if n.role == RoleNlp.TIRE)
+        assert tire_row.code_debiteur_matche == "DEB-2002"
+        assert tire_row.methode_identification == MethodeIdentification.RIB
+        assert tire_row.alerte_ecart_nom is False
 
 
 def test_known_fields_land_in_champs_extraits_correctly(db_session, tmp_path):
@@ -316,3 +469,18 @@ class TestParseHelpers:
 
     def test_parse_date_unparseable_returns_none(self):
         assert _parse_date("trente septembre") is None
+
+    def test_canonicalize_rib_pure_digits_unchanged(self):
+        assert _canonicalize_rib("11003000291700178836") == "11003000291700178836"
+
+    def test_canonicalize_rib_strips_spaces(self):
+        assert _canonicalize_rib("11 003 000 2917 0017 8836") == "11003000291700178836"
+
+    def test_canonicalize_rib_strips_hyphens(self):
+        assert _canonicalize_rib("11-003-000-2917-0017-8836") == "11003000291700178836"
+
+    def test_canonicalize_rib_empty_returns_none(self):
+        assert _canonicalize_rib("") is None
+
+    def test_canonicalize_rib_none_returns_none(self):
+        assert _canonicalize_rib(None) is None

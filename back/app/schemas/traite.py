@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db.models.traite import (
     Face,
+    MethodeIdentification,
     RoleNlp,
     SourceChamp,
     StatutVerification,
@@ -94,6 +95,8 @@ class RapprochementNlpRead(BaseModel):
     score: Decimal
     code_adherent_matche: str | None
     code_debiteur_matche: str | None
+    methode_identification: MethodeIdentification
+    alerte_ecart_nom: bool
 
 
 class VerificationManuelleRead(BaseModel):

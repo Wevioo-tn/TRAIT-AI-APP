@@ -19,6 +19,7 @@ export type StatutVerification = "conforme" | "anomalie";
 export type TypeDecision = "validee" | "renvoi" | "fraude";
 export type RoleNlp = "tireur" | "tire" | "ordre";
 export type MentionStatut = "ok" | "warn" | "absent";
+export type MethodeIdentification = "rib" | "nom_seul";
 
 export interface TraiteDocumentRead {
   id: string;
@@ -67,6 +68,8 @@ export interface RapprochementNlpRead {
   score: string;
   code_adherent_matche: string | null;
   code_debiteur_matche: string | null;
+  methode_identification: MethodeIdentification;
+  alerte_ecart_nom: boolean;
 }
 
 export interface MentionRead {
