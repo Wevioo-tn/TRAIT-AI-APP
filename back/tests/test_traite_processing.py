@@ -721,3 +721,92 @@ class TestMontantLettresVsChiffres:
         execute_analysis(traite.id, db_session, StubExtractor())
 
         assert "montant_lettres_vs_chiffres" not in self._incoherences_from_audit(db_session, traite.id)
+
+
+class TestNumeroLcnVsCodeBarres:
+    """Second, independent source for numero_lcn (Synthèse d'analyse :
+    Traite, "N° L-CN" — "OCR texte haut droite + lecture code-barres bas =
+    double vérification croisée"): the printed barcode, decoded directly
+    off the raw recto bytes — independent of OCR_PROVIDER/the extractor
+    used, so decode_barcode is monkeypatched at its call site rather than
+    exercised through a real image here (see test_barcode_reading.py for
+    the real decoding path)."""
+
+    def _incoherences_from_audit(self, session, traite_id) -> list[str]:
+        entry = session.scalar(
+            select(AuditLogEntry).where(AuditLogEntry.traite_id == traite_id, AuditLogEntry.action == "analyse_terminee")
+        )
+        return entry.details["incoherences"]
+
+    def test_concordant_barcode_adds_no_inconsistency(self, db_session, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.services.traite_processing.decode_barcode", lambda recto: "011570763437")
+        traite = _make_traite_with_documents(db_session, tmp_path)  # numero_lcn defaults to "011570763437"
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                *_pair(CHAMP_NUMERO_LCN, "011570763437"),
+                FieldCandidate(CHAMP_RIB_TIRE, 1, RIB_DEB_1001),
+                FieldCandidate(CHAMP_RIB_TIRE, 2, RIB_DEB_1001),
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert "numero_lcn_vs_code_barres" not in self._incoherences_from_audit(db_session, traite.id)
+        assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+
+    def test_discordant_barcode_flags_inconsistency_and_blocks_auto_confirm(self, db_session, tmp_path, monkeypatch):
+        """Even a RIB that matches cleanly must not auto-confirm past a
+        barcode that disagrees with the OCR'd numero_lcn."""
+        monkeypatch.setattr("app.services.traite_processing.decode_barcode", lambda recto: "999999999999")
+        traite = _make_traite_with_documents(db_session, tmp_path)  # numero_lcn defaults to "011570763437"
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                *_pair(CHAMP_NUMERO_LCN, "011570763437"),
+                FieldCandidate(CHAMP_RIB_TIRE, 1, RIB_DEB_1001),
+                FieldCandidate(CHAMP_RIB_TIRE, 2, RIB_DEB_1001),
+            ],
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert "numero_lcn_vs_code_barres" in self._incoherences_from_audit(db_session, traite.id)
+        assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+
+    def test_no_barcode_detected_leaves_behavior_unchanged(self, db_session, tmp_path, monkeypatch):
+        """Most real scans (cropped, rotated, low quality) won't have a
+        decodable barcode at all — a missing bonus signal, not a
+        discrepancy."""
+        monkeypatch.setattr("app.services.traite_processing.decode_barcode", lambda recto: None)
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        execute_analysis(traite.id, db_session, StubExtractor())
+
+        assert "numero_lcn_vs_code_barres" not in self._incoherences_from_audit(db_session, traite.id)
+
+    def test_incoherent_numero_lcn_occurrences_skip_the_barcode_comparison(self, db_session, tmp_path, monkeypatch):
+        """numero_lcn's own 2 OCR occurrences already disagree — that's its
+        own écart; no barcode comparison is attempted on top of it."""
+        monkeypatch.setattr("app.services.traite_processing.decode_barcode", lambda recto: "999999999999")
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=[
+                FieldCandidate(CHAMP_NUMERO_LCN, 1, "011570763437"),
+                FieldCandidate(CHAMP_NUMERO_LCN, 2, "000000000000"),  # disagrees with its own occurrence 1
+            ],
+        )
+        execute_analysis(traite.id, db_session, extractor)
+
+        assert "numero_lcn_vs_code_barres" not in self._incoherences_from_audit(db_session, traite.id)

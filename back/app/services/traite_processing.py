@@ -30,6 +30,7 @@ from app.db.models.traite import (
     TraiteDocument,
     TraiteStatut,
 )
+from app.services.barcode_reading import decode_barcode
 from app.services.extraction import (
     CHAMP_CLE_RIB,
     CHAMP_CODE_AGENCE,
@@ -128,6 +129,7 @@ def _coherent(values: list[str | None]) -> str | None:
 
 
 _INCOHERENCE_MONTANT_LETTRES = "montant_lettres_vs_chiffres"
+_INCOHERENCE_NUMERO_LCN_CODE_BARRES = "numero_lcn_vs_code_barres"
 
 
 def _normalize_montant_lettres(text: str) -> str:
@@ -300,6 +302,26 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
             ):
                 inconsistencies.append(_INCOHERENCE_MONTANT_LETTRES)
                 inconsistencies.sort()
+
+    # Second, independent source for numero_lcn (Synthèse d'analyse :
+    # Traite, "N° L-CN" — "OCR texte haut droite + lecture code-barres bas
+    # = double vérification croisée"): the printed barcode, decoded
+    # straight off the raw recto bytes with real image processing — not a
+    # third VLM occurrence, and not gated by OCR_PROVIDER, since it never
+    # goes through the extractor at all. Only compared once numero_lcn's
+    # own 2 OCR occurrences already agree (nothing reliable to compare
+    # otherwise, already flagged) and a barcode was actually decodable —
+    # most real scans (cropped, rotated, low-quality) won't have one, and
+    # that's a missing bonus signal, not a discrepancy.
+    numero_lcn_coherent = _coherent(by_field.get(CHAMP_NUMERO_LCN, []))
+    barcode_numero_lcn = _canonicalize_rib(decode_barcode(recto))
+    if (
+        numero_lcn_coherent is not None
+        and barcode_numero_lcn is not None
+        and _canonicalize_rib(numero_lcn_coherent) != barcode_numero_lcn
+    ):
+        inconsistencies.append(_INCOHERENCE_NUMERO_LCN_CODE_BARRES)
+        inconsistencies.sort()
 
     drawer_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIREUR), None)
     drawee_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIRE), None)
