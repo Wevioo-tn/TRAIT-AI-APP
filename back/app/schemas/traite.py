@@ -180,6 +180,22 @@ class FactureRapprocheeRead(BaseModel):
     montant_net: Decimal
 
 
+class DebtorCoverageRead(BaseModel):
+    """BPMN Phase 3, étape 3 — invoice coverage check for this bill's
+    resolved debtor, computed live (see app/services/coverage.py) over
+    every bill this app currently knows about for them, not scoped to any
+    one "remise" (still deferred — see that module's own docstring).
+    Settings.coverage_gap_threshold is a working hypothesis, not a value
+    the spec actually states — never present ``sufficient`` as a
+    definitive answer in the UI."""
+
+    total_bills_amount: Decimal
+    total_invoices_net_amount: Decimal
+    total_credit_notes_amount: Decimal
+    gap: Decimal
+    sufficient: bool
+
+
 class TraiteDetail(TraiteRead):
     documents: list[TraiteDocumentRead] = []
     champs_extraits: list[ChampExtraitRead] = []
@@ -201,6 +217,7 @@ class TraiteDetail(TraiteRead):
     # FactureRapprocheeRead's docstring for why it's a separate field, not
     # folded into that IMX read-only data.
     montant_avoirs_saisi: Decimal | None = None
+    debtor_coverage: DebtorCoverageRead | None = None
 
 
 class TraitePage(BaseModel):

@@ -97,6 +97,20 @@ export interface FactureRapprocheeRead {
   montant_net: string;
 }
 
+/** BPMN Phase 3, étape 3 — computed live server-side (see backend's
+ * app/services/coverage.py), not scoped to any one "remise" yet. New
+ * identifiers from here on follow this project's English-naming
+ * convention (see the ticket that introduced it) — unlike the
+ * French-named fields above it, carried over unchanged from earlier
+ * tickets. */
+export interface DebtorCoverageRead {
+  total_bills_amount: string;
+  total_invoices_net_amount: string;
+  total_credit_notes_amount: string;
+  gap: string;
+  sufficient: boolean;
+}
+
 export interface TraiteRead {
   id: string;
   numero_lcn: string;
@@ -127,6 +141,7 @@ export interface TraiteDetail extends TraiteRead {
   num_facture_rapprochee: string | null;
   facture_rapprochee: FactureRapprocheeRead | null;
   montant_avoirs_saisi: string | null;
+  debtor_coverage: DebtorCoverageRead | null;
 }
 
 export interface TraitePage {

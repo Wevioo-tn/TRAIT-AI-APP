@@ -58,6 +58,16 @@ logger = logging.getLogger(__name__)
 # the DB constraint at commit time, far from where the real cause is.
 _MAX_MONTANT = Decimal(10) ** 11
 
+# Placeholder for a bill created without a bordereau-declared amount (see
+# schemas.traite.TraiteCreate's docstring / routes/traites.py's
+# create_traite) — deliberately not a value that could pass for a real
+# one. Lives here (not in routes/traites.py, where it originated) so
+# app/services/coverage.py can recognize and exclude it too without a
+# service module reaching back into the API layer. Never promoted past
+# this by _promote_canonical_identity below unless a real OCR read
+# actually replaces it.
+PLACEHOLDER_BILL_AMOUNT = Decimal("0.001")
+
 
 def _read_document(traite_id: uuid.UUID, documents: list[TraiteDocument], face: Face) -> bytes:
     document = next((d for d in documents if d.face == face), None)

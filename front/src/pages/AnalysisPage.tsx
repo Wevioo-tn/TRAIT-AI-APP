@@ -493,6 +493,56 @@ function AvoirsCard({
             style={{ ...avoirsInputStyle, opacity: disabled ? 0.6 : 1 }}
           />
         </label>
+        {traite.debtor_coverage && <CoverageSummary coverage={traite.debtor_coverage} />}
+      </div>
+    </div>
+  );
+}
+
+// BPMN Phase 3, étape 3 — "Contrôler la couverture des factures par les
+// IP par débiteur". Aggregated across every bill this app currently
+// knows about for this débiteur (not scoped to "this remise" yet — see
+// backend's app/services/coverage.py), so these totals can differ from
+// this one bill's own numbers above. coverage_gap_threshold is a working
+// hypothesis (see Settings.coverage_gap_threshold's own docstring), never
+// presented here as a definitive spec value.
+function CoverageSummary({ coverage }: { coverage: NonNullable<TraiteDetail["debtor_coverage"]> }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        borderTop: `1px solid ${colors.dividerLight}`,
+        paddingTop: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted }}>
+          Couverture facture/IP du débiteur — toutes traites connues
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "2px 8px",
+            borderRadius: 11,
+            whiteSpace: "nowrap",
+            color: coverage.sufficient ? colors.greenText : colors.orangeText,
+            background: coverage.sufficient ? colors.greenBg : colors.orangeBg,
+            border: `1px solid ${coverage.sufficient ? colors.greenBorder : colors.orangeBorder}`,
+          }}
+        >
+          {coverage.sufficient ? "Couverture suffisante" : "Couverture insuffisante"}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, fontFamily: fonts.mono, color: colors.textHeading }}>
+        Traites {formatMontant(coverage.total_bills_amount)} · Factures nettes{" "}
+        {formatMontant(coverage.total_invoices_net_amount)} · Avoirs saisis{" "}
+        {formatMontant(coverage.total_credit_notes_amount)}
+      </div>
+      <div style={{ fontSize: 11.5, color: coverage.sufficient ? colors.greenText : colors.orangeText }}>
+        Écart : {formatMontant(coverage.gap)}
       </div>
     </div>
   );

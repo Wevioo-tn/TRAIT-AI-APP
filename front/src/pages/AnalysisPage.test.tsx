@@ -77,6 +77,13 @@ function baseTraite(overrides: Partial<TraiteDetail> = {}): TraiteDetail {
       montant_net: "8117.504",
     },
     montant_avoirs_saisi: null,
+    debtor_coverage: {
+      total_bills_amount: "8117.504",
+      total_invoices_net_amount: "8117.504",
+      total_credit_notes_amount: "0.000",
+      gap: "0.000",
+      sufficient: true,
+    },
     ...overrides,
   };
 }
@@ -211,6 +218,38 @@ describe("AnalysisPage", () => {
     await userEvent.tab();
 
     expect(mockedApi.updateMontantAvoirs).toHaveBeenCalledWith("t1", null);
+  });
+
+  it("shows a sufficient-coverage badge with the aggregated totals", async () => {
+    renderAnalysisPage(baseTraite());
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText("Couverture suffisante")).toBeInTheDocument();
+    expect(screen.getByText(/Traites 8 117,504 DT/)).toBeInTheDocument();
+  });
+
+  it("shows an insufficient-coverage badge when the gap exceeds the threshold", async () => {
+    const traite = baseTraite({
+      debtor_coverage: {
+        total_bills_amount: "8117.504",
+        total_invoices_net_amount: "500.000",
+        total_credit_notes_amount: "0.000",
+        gap: "-7617.504",
+        sufficient: false,
+      },
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText("Couverture insuffisante")).toBeInTheDocument();
+  });
+
+  it("hides the coverage summary when the debtor isn't resolved yet", async () => {
+    const traite = baseTraite({ debtor_coverage: null });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.queryByText(/Couverture/)).not.toBeInTheDocument();
   });
 
   it("calls updateVerification when a check button is clicked", async () => {

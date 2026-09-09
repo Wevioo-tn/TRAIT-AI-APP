@@ -5,6 +5,7 @@ app boots out of the box with docker-compose, but production deployments are
 expected to override every one of these via the environment (see .env.example
 at the repo root).
 """
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -42,6 +43,16 @@ class Settings(BaseSettings):
     # RIB match itself (that's a hard key from the bank instrument); only to
     # flag the écart explicitly instead of silently ignoring it.
     rib_corroboration_min_score: float = 50.0
+
+    # BPMN Phase 3, étape 3 ("Contrôler la couverture des factures par les
+    # IP par débiteur, seuil Seuil_Ecart_Couverture") — a working
+    # hypothesis, not a documented spec value. Unlike nlp_match_threshold's
+    # own sourced "Seuil_1" (95%, from the mockup), the spec names this
+    # check but states neither its unit nor its value. Assumed an absolute
+    # DT amount, not a percentage, until a real source says otherwise —
+    # see app/services/coverage.py; never present this as definitive in
+    # the UI.
+    coverage_gap_threshold: Decimal = Decimal("10.000")
 
     # Browsers enforce CORS, curl doesn't — every earlier "live smoke test"
     # in this project used curl and would have missed a missing CORS

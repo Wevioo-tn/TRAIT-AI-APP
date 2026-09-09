@@ -1,6 +1,5 @@
 import uuid
 from datetime import date, datetime, timezone
-from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func, select
@@ -22,6 +21,7 @@ from app.db.models.traite import (
 from app.db.session import get_session
 from app.schemas.traite import (
     ChampExtraitRead,
+    DebtorCoverageRead,
     DecisionCreate,
     DecisionRead,
     FactureRapprocheeRead,
@@ -41,8 +41,10 @@ from app.schemas.traite import (
     VerificationUpdate,
 )
 from app.services.audit import log_action
+from app.services.coverage import calculate_debtor_coverage
 from app.services.mentions_rules import evaluate_date_rules, evaluate_mandatory_mentions, find_matching_invoice
 from app.services.storage import LocalFileStorage, get_storage
+from app.services.traite_processing import PLACEHOLDER_BILL_AMOUNT
 from app.services.verification_rules import evaluate_verifications
 from app.tasks.traite_processing import run_traite_analysis
 
@@ -78,6 +80,13 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
         traite, traite.champs_extraits, traite.rapprochements_nlp, traite.verifications_manuelles
     )
     date_rules = evaluate_date_rules(traite, invoice)
+    # Computed live, not from anything stored on this traite: a debtor's
+    # coverage depends on every other bill/saisie known for them, which
+    # can change independently of this one bill's own last analysis (see
+    # app/services/coverage.py's own docstring).
+    debtor_coverage = (
+        await calculate_debtor_coverage(session, traite.code_debiteur) if traite.code_debiteur is not None else None
+    )
 
     return TraiteDetail(
         **TraiteRead.model_validate(traite).model_dump(),
@@ -107,6 +116,17 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
             else None
         ),
         montant_avoirs_saisi=traite.montant_avoirs_saisi,
+        debtor_coverage=(
+            DebtorCoverageRead(
+                total_bills_amount=debtor_coverage.total_bills_amount,
+                total_invoices_net_amount=debtor_coverage.total_invoices_net_amount,
+                total_credit_notes_amount=debtor_coverage.total_credit_notes_amount,
+                gap=debtor_coverage.gap,
+                sufficient=debtor_coverage.sufficient,
+            )
+            if debtor_coverage is not None
+            else None
+        ),
     )
 
 
@@ -152,16 +172,6 @@ async def get_traite_counts(session: AsyncSession = Depends(get_session)) -> Tra
     return TraiteCountsRead(par_statut={statut: counts.get(statut, 0) for statut in TraiteStatut})
 
 
-# Placeholder montant for a traite created without a bordereau-declared
-# amount (see TraiteCreate's docstring) — deliberately not 0 (the schema
-# itself forbids that, gt=0) or a value that could pass for a real one.
-# Downstream logic that trusts traite.montant (find_matching_invoice's
-# nearest-amount match, the queue table's Montant column) will be
-# meaningless until something replaces this — there's no correction step
-# yet, flagged here rather than silently assumed away.
-_PLACEHOLDER_MONTANT = Decimal("0.001")
-
-
 def _generate_numero_lcn() -> str:
     """A traite created straight from a scan, with no bordereau intake to
     read a real L-CN number from, still needs a unique key — see
@@ -177,7 +187,7 @@ async def create_traite(
 ) -> Traite:
     today = date.today()
     numero_lcn = payload.numero_lcn or _generate_numero_lcn()
-    montant = payload.montant if payload.montant is not None else _PLACEHOLDER_MONTANT
+    montant = payload.montant if payload.montant is not None else PLACEHOLDER_BILL_AMOUNT
     date_echeance = payload.date_echeance or today
     date_creation_traite = payload.date_creation_traite or today
 
