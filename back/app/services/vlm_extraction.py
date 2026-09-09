@@ -98,6 +98,19 @@ bancaire (Domiciliation) peut déborder hors de sa case imprimée. Lis le
 texte même s'il chevauche la case voisine ; ne le tronque jamais à la
 largeur de sa case.
 
+ATTENTION — piège fréquent sur la SECONDE occurrence de rib_tire /
+code_etablissement / code_agence / numero_compte / cle_rib : ce bloc
+"RIB ou RIP du Tiré" (avec ses 4 sous-cases Code étab./Code Agence/N° de
+Compte/Clé) est habituellement imprimé DEUX FOIS sur le document, à deux
+endroits visuellement distincts — une fois plus haut sur le recto, une
+seconde fois plus bas, juste avant la case "Nom et adresse du Tiré" et
+juste à côté de la case "Aval" (l'aval est un champ différent — une
+garantie bancaire, jamais le RIB : ne les confonds pas, et ne saute pas
+ce second bloc RIB sous prétexte que la case "Aval" voisine occupe une
+partie de la même zone). Cherche activement ce second bloc avant de
+répondre `null` pour occurrence_2 sur ces 5 champs — ne t'arrête pas dès
+que tu as trouvé le premier.
+
 Réponds UNIQUEMENT avec un objet JSON strictement de cette forme, sans texte autour, sans balises markdown :
 {
   "numero_lcn": {"occurrence_1": "...", "occurrence_2": "..."},
