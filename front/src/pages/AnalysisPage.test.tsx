@@ -84,6 +84,13 @@ function baseTraite(overrides: Partial<TraiteDetail> = {}): TraiteDetail {
       gap: "0.000",
       sufficient: true,
     },
+    control_rollup: {
+      mandatory_mentions_ok: true,
+      duplicated_fields_ok: true,
+      date_rules_ok: true,
+      identification_ok: true,
+      coverage_ok: true,
+    },
     ...overrides,
   };
 }
@@ -244,12 +251,54 @@ describe("AnalysisPage", () => {
     expect(screen.getByText("Couverture insuffisante")).toBeInTheDocument();
   });
 
+  it("shows one OK/KO badge per rubrique in the control rollup strip", async () => {
+    renderAnalysisPage(baseTraite());
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText(/✓ Mentions/)).toBeInTheDocument();
+    expect(screen.getByText(/✓ Champs dupliqués/)).toBeInTheDocument();
+    expect(screen.getByText(/✓ Dates/)).toBeInTheDocument();
+    expect(screen.getByText(/✓ Identification/)).toBeInTheDocument();
+    expect(screen.getByText(/✓ Couverture/)).toBeInTheDocument();
+  });
+
+  it("flags only the failing rubrique in the control rollup strip", async () => {
+    const traite = baseTraite({
+      control_rollup: {
+        mandatory_mentions_ok: false,
+        duplicated_fields_ok: true,
+        date_rules_ok: true,
+        identification_ok: true,
+        coverage_ok: true,
+      },
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText(/✗ Mentions/)).toBeInTheDocument();
+    expect(screen.getByText(/✓ Champs dupliqués/)).toBeInTheDocument();
+  });
+
+  it("hides the control rollup strip when the debtor isn't resolved yet", async () => {
+    const traite = baseTraite({ control_rollup: null });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    // "Mentions" alone also matches the unrelated MentionsCard's own
+    // header ("Mentions obligatoires...") — the rollup badge is specific
+    // (prefixed with its ✓/✗ icon), that unrelated card's title isn't.
+    expect(screen.queryByText(/[✓✗] Mentions/)).not.toBeInTheDocument();
+  });
+
   it("hides the coverage summary when the debtor isn't resolved yet", async () => {
     const traite = baseTraite({ debtor_coverage: null });
     renderAnalysisPage(traite);
     await screen.findByText("011570763437");
 
-    expect(screen.queryByText(/Couverture/)).not.toBeInTheDocument();
+    // The rollup strip's own "Couverture" badge is a different, more
+    // specific bit of UI (see the ✓/✗-prefixed rollup tests above) — this
+    // checks CoverageSummary's own distinctive label isn't rendered.
+    expect(screen.queryByText(/Couverture facture\/IP du débiteur/)).not.toBeInTheDocument();
   });
 
   it("calls updateVerification when a check button is clicked", async () => {

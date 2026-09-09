@@ -196,6 +196,22 @@ class DebtorCoverageRead(BaseModel):
     sufficient: bool
 
 
+class DebtorControlRollupRead(BaseModel):
+    """BPMN Phase 2, étape 10 — one OK/KO per rubrique, computed live
+    (see app/services/control_rollup.py) over every bill this app
+    currently knows about for this bill's resolved debtor, not scoped to
+    any one "remise" (still deferred — see that module's own docstring).
+    Each rubrique reuses a verdict already computed elsewhere on this
+    same API response for a single bill; this only rolls it up across
+    every bill known for the debtor."""
+
+    mandatory_mentions_ok: bool
+    duplicated_fields_ok: bool
+    date_rules_ok: bool
+    identification_ok: bool
+    coverage_ok: bool
+
+
 class TraiteDetail(TraiteRead):
     documents: list[TraiteDocumentRead] = []
     champs_extraits: list[ChampExtraitRead] = []
@@ -218,6 +234,7 @@ class TraiteDetail(TraiteRead):
     # folded into that IMX read-only data.
     montant_avoirs_saisi: Decimal | None = None
     debtor_coverage: DebtorCoverageRead | None = None
+    control_rollup: DebtorControlRollupRead | None = None
 
 
 class TraitePage(BaseModel):

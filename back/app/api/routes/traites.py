@@ -21,6 +21,7 @@ from app.db.models.traite import (
 from app.db.session import get_session
 from app.schemas.traite import (
     ChampExtraitRead,
+    DebtorControlRollupRead,
     DebtorCoverageRead,
     DecisionCreate,
     DecisionRead,
@@ -41,6 +42,7 @@ from app.schemas.traite import (
     VerificationUpdate,
 )
 from app.services.audit import log_action
+from app.services.control_rollup import calculate_debtor_control_rollup
 from app.services.coverage import calculate_debtor_coverage
 from app.services.mentions_rules import evaluate_date_rules, evaluate_mandatory_mentions, find_matching_invoice
 from app.services.storage import LocalFileStorage, get_storage
@@ -87,6 +89,11 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
     debtor_coverage = (
         await calculate_debtor_coverage(session, traite.code_debiteur) if traite.code_debiteur is not None else None
     )
+    control_rollup = (
+        await calculate_debtor_control_rollup(session, traite.code_debiteur)
+        if traite.code_debiteur is not None
+        else None
+    )
 
     return TraiteDetail(
         **TraiteRead.model_validate(traite).model_dump(),
@@ -125,6 +132,17 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
                 sufficient=debtor_coverage.sufficient,
             )
             if debtor_coverage is not None
+            else None
+        ),
+        control_rollup=(
+            DebtorControlRollupRead(
+                mandatory_mentions_ok=control_rollup.mandatory_mentions_ok,
+                duplicated_fields_ok=control_rollup.duplicated_fields_ok,
+                date_rules_ok=control_rollup.date_rules_ok,
+                identification_ok=control_rollup.identification_ok,
+                coverage_ok=control_rollup.coverage_ok,
+            )
+            if control_rollup is not None
             else None
         ),
     )

@@ -111,6 +111,17 @@ export interface DebtorCoverageRead {
   sufficient: boolean;
 }
 
+/** BPMN Phase 2, étape 10 — one OK/KO per rubrique, rolled up across
+ * every bill this app currently knows for this bill's resolved debtor
+ * (see backend's app/services/control_rollup.py). */
+export interface DebtorControlRollupRead {
+  mandatory_mentions_ok: boolean;
+  duplicated_fields_ok: boolean;
+  date_rules_ok: boolean;
+  identification_ok: boolean;
+  coverage_ok: boolean;
+}
+
 export interface TraiteRead {
   id: string;
   numero_lcn: string;
@@ -142,6 +153,7 @@ export interface TraiteDetail extends TraiteRead {
   facture_rapprochee: FactureRapprocheeRead | null;
   montant_avoirs_saisi: string | null;
   debtor_coverage: DebtorCoverageRead | null;
+  control_rollup: DebtorControlRollupRead | null;
 }
 
 export interface TraitePage {

@@ -410,6 +410,63 @@ function VerdictCard({ traite }: { traite: TraiteDetail }) {
           {traite.recommandation.detail}
         </div>
       </div>
+      {traite.control_rollup && <ControlRollupStrip rollup={traite.control_rollup} />}
+    </div>
+  );
+}
+
+// BPMN Phase 2, étape 10 — "Visualiser le résultat OK/KO par rubrique sur
+// l'écran principal", rolled up across every bill this app currently
+// knows for this bill's resolved débiteur (not scoped to "this remise"
+// yet — see backend's app/services/control_rollup.py). A rollup of
+// verdicts already shown in detail elsewhere on this page, not new
+// information — hence a compact strip here, not another full card.
+type ControlRollup = NonNullable<TraiteDetail["control_rollup"]>;
+
+const RUBRIQUE_LABELS: [keyof ControlRollup, string][] = [
+  ["mandatory_mentions_ok", "Mentions"],
+  ["duplicated_fields_ok", "Champs dupliqués"],
+  ["date_rules_ok", "Dates"],
+  ["identification_ok", "Identification"],
+  ["coverage_ok", "Couverture"],
+];
+
+function ControlRollupStrip({ rollup }: { rollup: ControlRollup }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+        padding: "9px 14px",
+        borderTop: `1px solid ${colors.dividerLight}`,
+        background: "#F7F9FB",
+      }}
+    >
+      {RUBRIQUE_LABELS.map(([key, label]) => {
+        const ok = rollup[key];
+        return (
+          <span
+            key={key}
+            title="Débiteur — toutes traites connues (hors remise)"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 10.5,
+              fontWeight: 600,
+              padding: "2px 8px",
+              borderRadius: 11,
+              whiteSpace: "nowrap",
+              color: ok ? colors.greenText : colors.orangeText,
+              background: ok ? colors.greenBg : colors.orangeBg,
+              border: `1px solid ${ok ? colors.greenBorder : colors.orangeBorder}`,
+            }}
+          >
+            {ok ? "✓" : "✗"} {label}
+          </span>
+        );
+      })}
     </div>
   );
 }

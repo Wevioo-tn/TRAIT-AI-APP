@@ -195,6 +195,49 @@ def reconstruct_rib(
     return "".join(canonical)
 
 
+def compute_inconsistencies(by_field: dict[str, list[str | None]]) -> list[str]:
+    """The champs_extraits-derivable duplicated-field écarts for one
+    bill: each field's own 2-occurrence disagreement, the RIB
+    direct-vs-4-segment-reconstruction cross-check (TR-122), and the
+    montant lettres-vs-chiffres cross-check (TR-111) — all fully
+    reconstructible from a bill's persisted ChampExtrait rows alone
+    (grouped by nom_champ into ``by_field`` the same way execute_analysis
+    itself builds it live, during analysis, from a fresh extraction
+    result). Factored out here so anything needing to re-derive this
+    later from persisted rows (the debtor control rollup) never
+    duplicates the logic by hand.
+
+    Deliberately excludes the numero_lcn-vs-barcode cross-check (TR-121):
+    that one depends on re-reading and re-decoding the raw recto image,
+    not on anything champs_extraits alone can reconstruct — out of scope
+    for a champs_extraits-only recomputation, and stays inline in
+    execute_analysis below."""
+    inconsistencies = sorted(name for name, values in by_field.items() if len(set(values)) > 1)
+
+    rib_direct = _coherent_rib_part(by_field, CHAMP_RIB_TIRE)
+    rib_reconstitue = reconstruct_rib(
+        _coherent_rib_part(by_field, CHAMP_CODE_ETABLISSEMENT),
+        _coherent_rib_part(by_field, CHAMP_CODE_AGENCE),
+        _coherent_rib_part(by_field, CHAMP_NUMERO_COMPTE),
+        _coherent_rib_part(by_field, CHAMP_CLE_RIB),
+    )
+    if rib_direct is not None and rib_reconstitue is not None and rib_direct != rib_reconstitue:
+        inconsistencies.append(_INCOHERENCE_RIB_RECONSTITUE)
+
+    montant_chiffres_coherent = _coherent(by_field.get(CHAMP_MONTANT_CHIFFRES, []))
+    montant_lettres_coherent = _coherent(by_field.get(CHAMP_MONTANT_LETTRES, []))
+    if montant_chiffres_coherent is not None and montant_lettres_coherent is not None:
+        montant_parsed = _parse_montant(montant_chiffres_coherent)
+        if montant_parsed is not None:
+            montant_attendu_en_lettres = amount_to_words(montant_parsed)
+            if _normalize_montant_lettres(montant_attendu_en_lettres) != _normalize_montant_lettres(
+                montant_lettres_coherent
+            ):
+                inconsistencies.append(_INCOHERENCE_MONTANT_LETTRES)
+
+    return sorted(inconsistencies)
+
+
 def _promote_canonical_identity(traite: Traite, by_field: dict[str, list[str | None]], session: Session) -> None:
     """Once extraction succeeds, its readings become the traite's own
     numero_lcn/montant/date_echeance/date_creation_traite — closing the
@@ -289,29 +332,15 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
     by_field: dict[str, list[str | None]] = {}
     for field in result.fields:
         by_field.setdefault(field.field_name, []).append(field.value)
-    inconsistencies = sorted(name for name, values in by_field.items() if len(set(values)) > 1)
 
     _promote_canonical_identity(traite, by_field, session)
 
-    # Cross-check montant_chiffres against montant_lettres — today each is
-    # only checked for its own internal coherence (2 OCR occurrences
-    # agreeing), never against each other, despite the spec's own
-    # "conversion numérique -> cohérence stricte avec montant en chiffres"
-    # requirement. Only attempted once each side is individually coherent
-    # (otherwise there's nothing reliable to compare — already flagged by
-    # the mechanism above); a disagreement joins the same inconsistencies
-    # list as every other duplicated-field écart, not a parallel mechanism.
-    montant_chiffres_coherent = _coherent(by_field.get(CHAMP_MONTANT_CHIFFRES, []))
-    montant_lettres_coherent = _coherent(by_field.get(CHAMP_MONTANT_LETTRES, []))
-    if montant_chiffres_coherent is not None and montant_lettres_coherent is not None:
-        montant_parsed = _parse_montant(montant_chiffres_coherent)
-        if montant_parsed is not None:
-            montant_attendu_en_lettres = amount_to_words(montant_parsed)
-            if _normalize_montant_lettres(montant_attendu_en_lettres) != _normalize_montant_lettres(
-                montant_lettres_coherent
-            ):
-                inconsistencies.append(_INCOHERENCE_MONTANT_LETTRES)
-                inconsistencies.sort()
+    # champs_extraits-derivable écarts (per-field occurrence mismatch, the
+    # RIB direct-vs-reconstructed cross-check, the montant
+    # lettres-vs-chiffres cross-check) — see compute_inconsistencies' own
+    # docstring for why this one function is the single source of truth
+    # for all three, shared with the debtor control rollup.
+    inconsistencies = compute_inconsistencies(by_field)
 
     # Second, independent source for numero_lcn (Synthèse d'analyse :
     # Traite, "N° L-CN" — "OCR texte haut droite + lecture code-barres bas
