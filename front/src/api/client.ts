@@ -155,6 +155,15 @@ export function updateVerification(traiteId: string, code: VerificationCode, sta
   });
 }
 
+/** Caissier's manual saisie of avoirs for this traite's coverage check
+ * (BPMN Phase 3, étape 2) — `null` clears a previous saisie. */
+export function updateMontantAvoirs(traiteId: string, montantAvoirs: number | null) {
+  return request<TraiteDetail>(`/traites/${traiteId}/montant-avoirs`, {
+    method: "PATCH",
+    body: JSON.stringify({ montant_avoirs: montantAvoirs }),
+  });
+}
+
 export function createDecision(traiteId: string, type: TypeDecision, commentaire?: string) {
   return request<DecisionRead>(`/traites/${traiteId}/decisions`, {
     method: "POST",

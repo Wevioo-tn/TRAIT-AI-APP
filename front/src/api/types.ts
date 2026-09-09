@@ -86,6 +86,17 @@ export interface RegleDateRead {
   ok: boolean | null;
 }
 
+/** Read-only context from the external IMX referential (imx.factures) —
+ * never modifiable through this API. Distinct from TraiteDetail's own
+ * montant_avoirs_saisi, which is this app's cashier observation, never a
+ * correction of this data. */
+export interface FactureRapprocheeRead {
+  num_facture: string;
+  montant_ttc: string;
+  montant_avoirs: string;
+  montant_net: string;
+}
+
 export interface TraiteRead {
   id: string;
   numero_lcn: string;
@@ -114,6 +125,8 @@ export interface TraiteDetail extends TraiteRead {
   mentions: MentionRead[];
   regles_dates: RegleDateRead[];
   num_facture_rapprochee: string | null;
+  facture_rapprochee: FactureRapprocheeRead | null;
+  montant_avoirs_saisi: string | null;
 }
 
 export interface TraitePage {

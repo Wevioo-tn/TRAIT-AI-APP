@@ -15,6 +15,7 @@ vi.mock("../api/client", async () => {
     getTraite: vi.fn(),
     getTraiteStatus: vi.fn(),
     updateVerification: vi.fn(),
+    updateMontantAvoirs: vi.fn(),
     getDocumentBlob: vi.fn(),
   };
 });
@@ -69,6 +70,13 @@ function baseTraite(overrides: Partial<TraiteDetail> = {}): TraiteDetail {
       { label: "Date de création ≤ date du jour", valeur_a: "2026-08-05", valeur_b: "2026-09-01", ok: true },
     ],
     num_facture_rapprochee: "FA-26-0117",
+    facture_rapprochee: {
+      num_facture: "FA-26-0117",
+      montant_ttc: "8400.000",
+      montant_avoirs: "282.496",
+      montant_net: "8117.504",
+    },
+    montant_avoirs_saisi: null,
     ...overrides,
   };
 }
@@ -163,6 +171,46 @@ describe("AnalysisPage", () => {
     renderAnalysisPage(traite);
     await screen.findByText("Échéance");
     expect(screen.getByText("⚠ Écart")).toBeInTheDocument();
+  });
+
+  it("shows the read-only IMX facture context distinct from the cashier's own saisie field", async () => {
+    renderAnalysisPage(baseTraite());
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText(/Référentiel IMX \(lecture seule\)/)).toBeInTheDocument();
+    expect(screen.getByText(/facture FA-26-0117/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Avoirs saisis (DT)")).toHaveValue(null);
+  });
+
+  it("prefills the avoirs input with an existing saisie", async () => {
+    renderAnalysisPage(baseTraite({ montant_avoirs_saisi: "150.500" }));
+    await screen.findByText("011570763437");
+
+    expect(screen.getByLabelText("Avoirs saisis (DT)")).toHaveValue(150.5);
+  });
+
+  it("saves the cashier's avoirs saisie on blur", async () => {
+    mockedApi.updateMontantAvoirs.mockResolvedValue(baseTraite());
+    renderAnalysisPage(baseTraite());
+    await screen.findByText("011570763437");
+
+    const input = screen.getByLabelText("Avoirs saisis (DT)");
+    await userEvent.type(input, "150.5");
+    await userEvent.tab();
+
+    expect(mockedApi.updateMontantAvoirs).toHaveBeenCalledWith("t1", 150.5);
+  });
+
+  it("clears a previous saisie by blurring an empty avoirs input", async () => {
+    mockedApi.updateMontantAvoirs.mockResolvedValue(baseTraite());
+    renderAnalysisPage(baseTraite({ montant_avoirs_saisi: "150.500" }));
+    await screen.findByText("011570763437");
+
+    const input = screen.getByLabelText("Avoirs saisis (DT)");
+    await userEvent.clear(input);
+    await userEvent.tab();
+
+    expect(mockedApi.updateMontantAvoirs).toHaveBeenCalledWith("t1", null);
   });
 
   it("calls updateVerification when a check button is clicked", async () => {

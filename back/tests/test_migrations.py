@@ -91,6 +91,16 @@ def test_rapprochements_nlp_has_identification_method_columns(sync_engine):
     assert {"methode_identification", "alerte_ecart_nom"} <= columns
 
 
+def test_traites_has_nullable_montant_avoirs_saisi(sync_engine):
+    """BPMN Phase 3, étape 2 — the caissier's own avoirs saisie, deliberately
+    on this app's traites table, never on imx.factures (see
+    app/db/models/traite.py's own docstring on this column)."""
+    inspector = inspect(sync_engine)
+    columns = {c["name"]: c for c in inspector.get_columns("traites")}
+    assert "montant_avoirs_saisi" in columns
+    assert columns["montant_avoirs_saisi"]["nullable"] is True
+
+
 def test_verifications_manuelles_unique_per_traite_and_code(sync_engine):
     inspector = inspect(sync_engine)
     uniques = inspector.get_unique_constraints("verifications_manuelles")

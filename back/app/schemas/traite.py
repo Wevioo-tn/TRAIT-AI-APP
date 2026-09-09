@@ -63,6 +63,14 @@ class DecisionCreate(BaseModel):
     commentaire: str | None = Field(default=None, max_length=4000)
 
 
+class MontantAvoirsUpdate(BaseModel):
+    # null (or omitted) clears a previous saisie — same "toggle" semantics
+    # as VerificationUpdate.statut. ge=0: an avoir can't be negative; 0
+    # itself is a legitimate saisie ("no avoir applicable"), distinct from
+    # null ("not yet saisi").
+    montant_avoirs: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=3)
+
+
 class TraiteDocumentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -158,6 +166,20 @@ class RegleDateRead(BaseModel):
     ok: bool | None  # null = indéterminée (aucune facture rapprochée)
 
 
+class FactureRapprocheeRead(BaseModel):
+    """Read-only context from the external IMX referential
+    (imx.factures) — never modifiable through this API (production
+    connects to the real IMX database read-only, see db/models/imx.py).
+    Distinct from TraiteDetail.montant_avoirs_saisi, which is this app's
+    own cashier observation for this control, never a correction of this
+    data."""
+
+    num_facture: str
+    montant_ttc: Decimal
+    montant_avoirs: Decimal
+    montant_net: Decimal
+
+
 class TraiteDetail(TraiteRead):
     documents: list[TraiteDocumentRead] = []
     champs_extraits: list[ChampExtraitRead] = []
@@ -174,6 +196,11 @@ class TraiteDetail(TraiteRead):
     mentions: list[MentionRead] = []
     regles_dates: list[RegleDateRead] = []
     num_facture_rapprochee: str | None = None
+    facture_rapprochee: FactureRapprocheeRead | None = None
+    # This app's own cashier observation (BPMN Phase 3, étape 2) — see
+    # FactureRapprocheeRead's docstring for why it's a separate field, not
+    # folded into that IMX read-only data.
+    montant_avoirs_saisi: Decimal | None = None
 
 
 class TraitePage(BaseModel):

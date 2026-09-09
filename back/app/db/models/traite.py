@@ -99,6 +99,14 @@ class Traite(Base):
     # Resolved once the NLP reconciliation confirms the match — null until then.
     code_adherent: Mapped[str | None] = mapped_column(ForeignKey(Adherent.code_adherent))
     code_debiteur: Mapped[str | None] = mapped_column(ForeignKey(Debiteur.code_debiteur))
+    # BPMN Phase 3, étape 2 (Caissier) — "Saisir manuellement les montants
+    # des avoirs par débiteur si applicable", feeding a future TR-112
+    # coverage calculation. Deliberately app-owned, never written into
+    # imx.factures.montant_avoirs: that column belongs to the external IMX
+    # referential (db/models/imx.py), which production connects to
+    # read-only — a cashier's observation about THIS traite's control must
+    # not collide with (or be silently lost by) that. Null = not yet saisi.
+    montant_avoirs_saisi: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

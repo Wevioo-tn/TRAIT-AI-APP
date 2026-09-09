@@ -24,7 +24,9 @@ from app.schemas.traite import (
     ChampExtraitRead,
     DecisionCreate,
     DecisionRead,
+    FactureRapprocheeRead,
     MentionRead,
+    MontantAvoirsUpdate,
     RapprochementNlpRead,
     RecommandationRead,
     RegleDateRead,
@@ -94,6 +96,17 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
             RegleDateRead(label=r.label, valeur_a=r.value_a, valeur_b=r.value_b, ok=r.ok) for r in date_rules
         ],
         num_facture_rapprochee=invoice.num_facture if invoice else None,
+        facture_rapprochee=(
+            FactureRapprocheeRead(
+                num_facture=invoice.num_facture,
+                montant_ttc=invoice.montant_ttc,
+                montant_avoirs=invoice.montant_avoirs,
+                montant_net=invoice.montant_net,
+            )
+            if invoice
+            else None
+        ),
+        montant_avoirs_saisi=traite.montant_avoirs_saisi,
     )
 
 
@@ -335,6 +348,50 @@ async def update_verification(
     await session.commit()
     await session.refresh(verification)
     return verification
+
+
+@router.patch("/{traite_id}/montant-avoirs", response_model=TraiteDetail)
+async def update_montant_avoirs(
+    traite_id: uuid.UUID,
+    payload: MontantAvoirsUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: str = Depends(get_current_user),
+) -> TraiteDetail:
+    """Caissier's manual observation of the avoirs applicable to this
+    traite's coverage check (BPMN Phase 3, étape 2 — "Saisir manuellement
+    les montants des avoirs par débiteur si applicable"), feeding a future
+    TR-112 coverage calculation (still out of scope). Deliberately never
+    written into imx.factures.montant_avoirs — see Traite.montant_avoirs_saisi's
+    own docstring for why. Returns the full detail (not just the touched
+    field) since the caissier judging "si applicable" needs the read-only
+    IMX facture context (facture_rapprochee) alongside it in one response."""
+    traite = await session.get(Traite, traite_id)
+    if traite is None:
+        raise HTTPException(status_code=404, detail="Traite introuvable.")
+    if traite.statut in _FINAL_STATUTS:
+        raise HTTPException(
+            status_code=409,
+            detail="Cette traite a une décision finale ; le montant des avoirs n'est plus modifiable.",
+        )
+
+    ancienne_valeur = traite.montant_avoirs_saisi
+    traite.montant_avoirs_saisi = payload.montant_avoirs
+
+    await log_action(
+        session,
+        user=current_user,
+        action="montant_avoirs_saisi",
+        traite_id=traite_id,
+        details={
+            "ancienne_valeur": str(ancienne_valeur) if ancienne_valeur is not None else None,
+            "nouvelle_valeur": str(payload.montant_avoirs) if payload.montant_avoirs is not None else None,
+        },
+    )
+
+    await session.commit()
+
+    detail_stmt = select(Traite).where(Traite.id == traite_id).options(*_DETAIL_OPTIONS)
+    return await _build_detail(session, await session.scalar(detail_stmt))
 
 
 @router.post("/{traite_id}/decisions", response_model=DecisionRead, status_code=201)

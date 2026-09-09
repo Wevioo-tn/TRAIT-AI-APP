@@ -118,6 +118,14 @@ export default function AnalysisPage() {
     },
   });
 
+  const montantAvoirsMutation = useMutation({
+    mutationFn: (montantAvoirs: number | null) => api.updateMontantAvoirs(id as string, montantAvoirs),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["traites", id] }),
+    onError: (error: unknown) => {
+      toast.show("ko", "Action impossible", error instanceof ApiError ? error.message : "Erreur inattendue.");
+    },
+  });
+
   if (detailQuery.isLoading) {
     return <div className="tp-page-pad" style={{ padding: 26, color: colors.textMuted }}>Chargement…</div>;
   }
@@ -177,6 +185,7 @@ export default function AnalysisPage() {
           {isProcessing ? (
             <>
               <SkeletonCard title="Verdict de l'agent" rows={3} />
+              <SkeletonCard title="Avoirs par débiteur (saisie manuelle)" rows={2} />
               <SkeletonCard title="Mentions obligatoires de la lettre de change" rows={4} />
               <SkeletonCard title="Contrôle de cohérence des champs dupliqués" rows={4} />
               <SkeletonCard title="Contrôles de dates" rows={3} />
@@ -186,6 +195,11 @@ export default function AnalysisPage() {
           ) : (
             <>
               <VerdictCard traite={traite} />
+              <AvoirsCard
+                traite={traite}
+                disabled={hasDecision}
+                onSave={(montantAvoirs) => montantAvoirsMutation.mutate(montantAvoirs)}
+              />
               <MentionsCard traite={traite} />
               <ChampsCard traite={traite} />
               <DateRulesCard traite={traite} />
@@ -395,6 +409,90 @@ function VerdictCard({ traite }: { traite: TraiteDetail }) {
         <div style={{ fontSize: 11.5, color: traite.bloque ? "#8A5312" : colors.greenText, lineHeight: 1.5, marginTop: 3 }}>
           {traite.recommandation.detail}
         </div>
+      </div>
+    </div>
+  );
+}
+
+const avoirsInputStyle: React.CSSProperties = {
+  border: `1px solid ${colors.borderInput}`,
+  borderRadius: 5,
+  padding: "6px 9px",
+  fontFamily: fonts.mono,
+  fontSize: 12.5,
+  color: colors.textPrimary,
+  outline: "none",
+  width: 130,
+};
+
+// BPMN Phase 3, étape 2 (Caissier) — "Saisir manuellement les montants des
+// avoirs par débiteur si applicable". The facture's own montant_ttc/
+// montant_avoirs/montant_net come straight from the read-only IMX
+// referential (facture_rapprochee) and are never editable here — only
+// montant_avoirs_saisi is, and it's this app's own observation, not a
+// correction of that IMX data (see backend's FactureRapprocheeRead
+// docstring for the same distinction on the API side).
+function AvoirsCard({
+  traite,
+  disabled,
+  onSave,
+}: {
+  traite: TraiteDetail;
+  disabled: boolean;
+  onSave: (montantAvoirs: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(traite.montant_avoirs_saisi ?? "");
+
+  useEffect(() => {
+    setDraft(traite.montant_avoirs_saisi ?? "");
+  }, [traite.montant_avoirs_saisi]);
+
+  const facture = traite.facture_rapprochee;
+
+  function commit() {
+    if (draft.trim() === "") {
+      onSave(null);
+      return;
+    }
+    const parsed = Number(draft);
+    if (!Number.isNaN(parsed)) onSave(parsed);
+  }
+
+  return (
+    <div style={card}>
+      <div style={cardHeader}>
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>Avoirs par débiteur</span>
+      </div>
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted }}>
+            Référentiel IMX (lecture seule){facture ? ` — facture ${facture.num_facture}` : ""}
+          </span>
+          {facture ? (
+            <span style={{ fontSize: 12, fontFamily: fonts.mono }}>
+              TTC {formatMontant(facture.montant_ttc)} · Avoirs {formatMontant(facture.montant_avoirs)} · Net{" "}
+              {formatMontant(facture.montant_net)}
+            </span>
+          ) : (
+            <span style={{ fontSize: 11.5, color: colors.textMuted }}>Aucune facture rapprochée.</span>
+          )}
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: colors.textHeading, whiteSpace: "nowrap" }}>
+            Avoirs saisis (DT)
+          </span>
+          <input
+            type="number"
+            min="0"
+            step="0.001"
+            placeholder="Si applicable…"
+            value={draft}
+            disabled={disabled}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            style={{ ...avoirsInputStyle, opacity: disabled ? 0.6 : 1 }}
+          />
+        </label>
       </div>
     </div>
   );
