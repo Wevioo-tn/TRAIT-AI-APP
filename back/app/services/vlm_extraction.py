@@ -80,8 +80,8 @@ lecture redondante de la même case.
 
 Relève aussi, une seule fois chacun :
 - tireur_texte (nom de l'entreprise qui tire la traite, généralement en haut du recto)
-- tire_texte (nom de l'entreprise tirée / débitrice, dans la case "payez contre cette lettre de change à l'ordre de...")
-- ordre_texte (bénéficiaire de l'endossement au verso, généralement "à l'ordre de ...")
+- tire_texte (nom et adresse de l'entreprise tirée / débitrice, case "Nom et adresse du Tiré", généralement en bas du recto — PAS la case "payer à l'ordre de", voir ordre_texte ci-dessous)
+- ordre_texte (bénéficiaire désigné dans la case "payer à l'ordre de" du RECTO, juste après la case Protestable — généralement le tireur lui-même ou un tiers qu'il désigne. Distinct de l'endossement au verso ("Réservé à l'endossement") : cette zone verso n'a jamais de donnée exploitable par OCR, ne cherche pas ordre_texte là-bas)
 - domiciliation_texte (nom et adresse de l'agence bancaire du tiré)
 
 ATTENTION — piège fréquent sur tireur_texte / tire_texte / ordre_texte : le
