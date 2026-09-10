@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models.traite import AuditLogEntry
+from app.db.models.traite import AuditLogEntry, Traite, TraiteStatut
 
 from .conftest import TEST_USERNAME
 
@@ -117,6 +117,37 @@ async def test_decision_validee_blocked_by_single_anomaly_even_if_rest_conforme(
     response = await client.post(f"/api/traites/{traite_id}/decisions", json={"type": "validee"})
     assert response.status_code == 409
     assert "Anomalie" in response.json()["detail"]
+
+
+async def test_decision_validee_blocked_by_unresolved_automatic_ecarts_even_if_manual_all_conforme(
+    client, sync_engine
+):
+    """TR-117: the real bug found live — a traite could be genuinely
+    validated through this exact endpoint once the 4 manual checks were
+    conforme, even with a real, unresolved automatic écart (a RIB-confirmed
+    débiteur whose scanned name doesn't corroborate, a duplicated-field
+    mismatch, ...) that execute_analysis had already flagged by leaving the
+    traite's own statut at ECARTS_A_TRAITER."""
+    traite_id = await _create_traite(client)
+    await _mark_all_conforme(client, traite_id)
+
+    # Simulates what execute_analysis leaves behind on a traite with a real
+    # unresolved écart — setting the statut directly is the pragmatic way
+    # to reach this state in an API-level test without re-running a full
+    # OCR pipeline (see test_traite_processing.py for how that statut is
+    # actually computed).
+    with Session(sync_engine) as session:
+        traite = session.get(Traite, uuid.UUID(traite_id))
+        traite.statut = TraiteStatut.ECARTS_A_TRAITER
+        session.commit()
+
+    response = await client.post(f"/api/traites/{traite_id}/decisions", json={"type": "validee"})
+    assert response.status_code == 409
+    assert "Écarts automatiques" in response.json()["detail"]
+
+    # Never actually validated — the traite's own statut is untouched.
+    traite = await client.get(f"/api/traites/{traite_id}")
+    assert traite.json()["statut"] == "Écarts à traiter"
 
 
 async def test_decision_renvoi_requires_commentaire(client):

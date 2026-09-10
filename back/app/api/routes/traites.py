@@ -76,7 +76,7 @@ _DETAIL_OPTIONS = (
 async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
     """Assemble the full detail response, including everything computed
     server-side rather than stored as columns on the ORM model."""
-    blocking_state = evaluate_verifications(traite.verifications_manuelles)
+    blocking_state = evaluate_verifications(traite.verifications_manuelles, traite.statut)
     invoice = await find_matching_invoice(session, traite)
     mentions = evaluate_mandatory_mentions(
         traite, traite.champs_extraits, traite.rapprochements_nlp, traite.verifications_manuelles
@@ -444,7 +444,7 @@ async def create_decision(
         raise HTTPException(status_code=409, detail="Cette traite a déjà une décision finale.")
 
     if payload.type == TypeDecision.VALIDEE:
-        blocking_state = evaluate_verifications(traite.verifications_manuelles)
+        blocking_state = evaluate_verifications(traite.verifications_manuelles, traite.statut)
         if blocking_state.blocked:
             raise HTTPException(status_code=409, detail=blocking_state.reason)
 
