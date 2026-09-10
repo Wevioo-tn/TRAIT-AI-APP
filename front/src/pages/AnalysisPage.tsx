@@ -735,29 +735,43 @@ function ChampsCard({ traite }: { traite: TraiteDetail }) {
           )}
         </tbody>
       </table>
-      {traite.cross_field_discrepancies.length > 0 && (
+      {/* Only the 3 genuinely cross-field checks (a value compared against
+          a DIFFERENT field/source — RIB direct vs reconstitué, montant
+          chiffres vs lettres, N°L-CN vs code-barres) belong here — that's
+          real, new information not visible anywhere else on this page. A
+          plain field's own occurrence_1-vs-2 mismatch (e.g. "montant_chiffres"
+          alone, meaning its 2nd occurrence just wasn't found) is already
+          shown, correctly and in full detail, as an "⚠ Écart" row in the
+          table above — repeating just its bare name here with no values
+          looks like a cross-check failure it never was (found live: a
+          reviewer reading "montant_chiffres, montant_lettres" here assumed
+          the two disagreed with each other, when in fact both values agree
+          and neither field even has a real 2nd occurrence to compare). */}
+      {traite.cross_field_discrepancies.filter((code) => code in CROSS_FIELD_DISCREPANCY_LABELS).length > 0 && (
         <div style={{ padding: "10px 14px", borderTop: `1px solid ${colors.dividerLight}`, display: "flex", flexDirection: "column", gap: 6 }}>
           <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted }}>
             Écarts croisés détectés
           </span>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {traite.cross_field_discrepancies.map((code) => (
-              <span
-                key={code}
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: "2px 8px",
-                  borderRadius: 11,
-                  whiteSpace: "nowrap",
-                  color: colors.orangeText,
-                  background: colors.orangeBg,
-                  border: `1px solid ${colors.orangeBorder}`,
-                }}
-              >
-                ⚠ {CROSS_FIELD_DISCREPANCY_LABELS[code] ?? code}
-              </span>
-            ))}
+            {traite.cross_field_discrepancies
+              .filter((code) => code in CROSS_FIELD_DISCREPANCY_LABELS)
+              .map((code) => (
+                <span
+                  key={code}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "2px 8px",
+                    borderRadius: 11,
+                    whiteSpace: "nowrap",
+                    color: colors.orangeText,
+                    background: colors.orangeBg,
+                    border: `1px solid ${colors.orangeBorder}`,
+                  }}
+                >
+                  ⚠ {CROSS_FIELD_DISCREPANCY_LABELS[code]}
+                </span>
+              ))}
           </div>
         </div>
       )}

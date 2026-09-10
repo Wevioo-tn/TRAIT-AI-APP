@@ -215,6 +215,24 @@ describe("AnalysisPage", () => {
     expect(screen.queryByText("Écarts croisés détectés")).not.toBeInTheDocument();
   });
 
+  it("never shows a plain field's own occurrence mismatch as a cross-field discrepancy", async () => {
+    // Real case found live: montant_chiffres/montant_lettres each missing
+    // their 2nd occurrence lands both plain field names in
+    // cross_field_discrepancies (compute_inconsistencies' first, per-field
+    // check) — but the real montant_lettres_vs_chiffres cross-check never
+    // even ran (it requires both fields individually coherent first). The
+    // banner must stay hidden here: showing "montant_chiffres" alone falsely
+    // implies chiffres and lettres disagree with each other, when they were
+    // never actually compared. That per-field mismatch is already visible,
+    // correctly, as an "⚠ Écart" row in the coherence table above.
+    const traite = baseTraite({ cross_field_discrepancies: ["montant_chiffres", "montant_lettres"] });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.queryByText("Écarts croisés détectés")).not.toBeInTheDocument();
+    expect(screen.queryByText(/montant_chiffres/)).not.toBeInTheDocument();
+  });
+
   it("shows the read-only IMX facture context distinct from the cashier's own saisie field", async () => {
     renderAnalysisPage(baseTraite());
     await screen.findByText("011570763437");
