@@ -102,7 +102,11 @@ async def test_traite_detail_exposes_mentions_and_matched_facture(client, tmp_pa
             execute_analysis(
                 uuid.UUID(traite_id),
                 session,
-                StubExtractor(tireur_texte="ADACTIM", tire_texte="LA MÉDITERRANÉENNE"),
+                StubExtractor(
+                    tireur_texte="ADACTIM",
+                    tire_texte="LA MÉDITERRANÉENNE",
+                    domiciliation_texte="UBCI Agence Paris, Tunis",
+                ),
             )
             session.commit()
 
@@ -110,6 +114,10 @@ async def test_traite_detail_exposes_mentions_and_matched_facture(client, tmp_pa
         body = response.json()
 
         assert body["num_facture_rapprochee"] == NUM_FACTURE
+        # TR-116: two real, already-computed values that were previously
+        # invisible to a reviewer — exposed here for the first time.
+        assert body["domiciliation"] == "UBCI Agence Paris, Tunis"
+        assert body["cross_field_discrepancies"] == []  # StubExtractor's fields are all internally coherent
 
         mentions_by_code = {m["code"]: m for m in body["mentions"]}
         assert mentions_by_code["nom_tire"]["statut"] == "ok"

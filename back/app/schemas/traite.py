@@ -235,6 +235,15 @@ class TraiteDetail(TraiteRead):
     montant_avoirs_saisi: Decimal | None = None
     debtor_coverage: DebtorCoverageRead | None = None
     control_rollup: DebtorControlRollupRead | None = None
+    # A single, unique-occurrence attribute of the bill (see
+    # Traite.domiciliation's own docstring) — free text, no validation.
+    domiciliation: str | None = None
+    # Snapshot taken at analysis time (see Traite.cross_field_discrepancies'
+    # own docstring for why this one isn't recomputed live like
+    # debtor_coverage/control_rollup above). Empty list, never null, on the
+    # API side: "never analyzed" and "analyzed with nothing to flag" both
+    # mean "nothing to show here."
+    cross_field_discrepancies: list[str] = []
 
 
 class TraitePage(BaseModel):

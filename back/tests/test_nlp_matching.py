@@ -59,6 +59,21 @@ def test_case_and_accent_difference_still_below_auto_confirm_threshold():
     assert 85.0 <= result.score < 95.0
 
 
+def test_zero_score_single_candidate_still_reports_which_one_was_compared():
+    """Real bug, found live: a RIB-resolved débiteur's single-candidate
+    corroboration (see traite_processing.py) can genuinely score exactly
+    0.0 — "SPG" against "LA MÉDITERRANÉENNE" really does (confirmed
+    directly against rapidfuzz, not assumed). A strict `score >
+    best_score` starting at 0.0 left reference_value at None ("aucune
+    correspondance" in the UI) even though a specific, known candidate
+    really was compared — a reviewer could see the écart but not what it
+    was measured against."""
+    result = best_match("SPG", [("DEB-1001", "LA MÉDITERRANÉENNE")])
+    assert result.score == 0.0
+    assert result.code == "DEB-1001"
+    assert result.reference_value == "LA MÉDITERRANÉENNE"
+
+
 class TestMatchDebiteurByRib:
     """match_debiteur_by_rib — exact match only, against the real test DB."""
 

@@ -38,14 +38,22 @@ def best_match(scanned_value: str | None, candidates: list[tuple[str, str]]) -> 
     its own string in lowercase scored 5.6, not ~100, before this fix), and
     case is exactly the kind of noise a real scan/OCR pass can introduce
     that has nothing to do with whether the name is actually the right one.
+
+    Ties (including an outright 0.0) go to whichever candidate was compared
+    first, never to "no candidate at all" — found live: a RIB-resolved
+    débiteur's single-candidate corroboration (see traite_processing.py)
+    scored a genuine, real 0.0 against "SPG", and a strict ``>`` here left
+    reference_value at None ("aucune correspondance" in the UI) even though
+    a specific, known candidate really was compared. The reviewer needs to
+    see *what* it was compared against — especially when the score is bad
+    enough to matter.
     """
     if not scanned_value or not candidates:
         return MatchResult(code=None, reference_value=None, score=0.0)
 
-    best_code: str | None = None
-    best_ref: str | None = None
-    best_score = 0.0
-    for code, raison_sociale in candidates:
+    best_code, best_ref = candidates[0]
+    best_score = fuzz.WRatio(scanned_value.casefold(), best_ref.casefold())
+    for code, raison_sociale in candidates[1:]:
         score = fuzz.WRatio(scanned_value.casefold(), raison_sociale.casefold())
         if score > best_score:
             best_code, best_ref, best_score = code, raison_sociale, score

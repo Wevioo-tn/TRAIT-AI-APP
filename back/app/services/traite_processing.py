@@ -42,6 +42,7 @@ from app.services.extraction import (
     CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
+    ROLE_DOMICILIATION,
     ROLE_ORDRE,
     ROLE_TIRE,
     ROLE_TIREUR,
@@ -362,9 +363,23 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
         inconsistencies.append(_INCOHERENCE_NUMERO_LCN_CODE_BARRES)
         inconsistencies.sort()
 
+    # Snapshot, not a live recomputation (see Traite.cross_field_discrepancies'
+    # own docstring for why that's correct here): the 3 real cross-checks
+    # above (RIB direct-vs-reconstructed, montant lettres-vs-chiffres,
+    # numero_lcn-vs-barcode) already block auto-confirm via `inconsistencies`
+    # but were never visible anywhere outside audit_log.details until now.
+    traite.cross_field_discrepancies = inconsistencies
+
     drawer_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIREUR), None)
     drawee_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIRE), None)
     payee_text = next((p.scanned_value for p in result.parties if p.role == ROLE_ORDRE), None)
+    # A single, unique-occurrence attribute of the bill itself (see
+    # Traite.domiciliation's own docstring) — raw text, no validation, no
+    # referential to compare against. Previously read by the VLM prompt
+    # (TR-122) and then silently dropped: never persisted, never exposed.
+    traite.domiciliation = next(
+        (p.scanned_value for p in result.parties if p.role == ROLE_DOMICILIATION), None
+    )
 
     adherents = session.scalars(select(Adherent)).all()
     debiteurs = session.scalars(select(Debiteur)).all()
@@ -391,13 +406,15 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
 
     if rib_direct is not None and rib_reconstitue is not None and rib_direct != rib_reconstitue:
         # The two readings disagree — exactly as serious as any other
-        # duplicated-field écart (numero_lcn, montant, ...), so it joins
-        # the same inconsistencies list rather than a second, parallel
-        # blocking mechanism. Neither reading is trusted enough on its own
-        # to identify a débiteur here: picking one over the other would be
+        # duplicated-field écart (numero_lcn, montant, ...); already
+        # recorded in `inconsistencies` by compute_inconsistencies above
+        # (TR-116: fixed a real duplicate-append bug here, caught by
+        # persisting/asserting the exact list instead of just membership —
+        # this same condition used to also append its own second copy of
+        # _INCOHERENCE_RIB_RECONSTITUE). Nothing left to do here but decide
+        # the match: neither reading is trusted enough on its own to
+        # identify a débiteur — picking one over the other would be
         # exactly the kind of guess RIB-first matching exists to avoid.
-        inconsistencies.append(_INCOHERENCE_RIB_RECONSTITUE)
-        inconsistencies.sort()
         rib = None
     else:
         # Either they agree (reconstructed from 2 independently-read

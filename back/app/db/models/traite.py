@@ -111,6 +111,25 @@ class Traite(Base):
     # read-only — a cashier's observation about THIS traite's control must
     # not collide with (or be silently lost by) that. Null = not yet saisi.
     montant_avoirs_saisi: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
+    # Resolved from the scanned Domiciliation box (TR-122 extracts it via
+    # ROLE_DOMICILIATION; this ticket is what persists/exposes it — until
+    # now the value arrived from the model and was silently dropped). Same
+    # family as code_adherent/code_debiteur: a single, unique-occurrence
+    # attribute of the bill itself — not a duplicated field (no second
+    # occurrence to check coherence against) and not compared to any
+    # referential (IMX has no "domiciliations" table). Free text, no
+    # validation: contextual information for the reviewer, not a control
+    # field. Null = the model didn't return one.
+    domiciliation: Mapped[str | None] = mapped_column(Text)
+    # Snapshot of compute_inconsistencies' output at the moment THIS
+    # analysis ran (RIB direct-vs-reconstructed, montant lettres-vs-
+    # chiffres, numero_lcn-vs-barcode — see traite_processing.py). Unlike
+    # debtor_coverage/control_rollup (TR-112/TR-123, deliberately
+    # recomputed live because they depend on *other* bills that can change
+    # independently), this list depends only on this bill's own analysis —
+    # a snapshot taken then is correct, and avoids re-decoding the barcode
+    # on every screen load. Null = never analyzed yet.
+    cross_field_discrepancies: Mapped[list[str] | None] = mapped_column(JSONB)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -36,6 +36,18 @@ const CHAMP_LABELS: Record<string, string> = {
 // your call) — the data itself is untouched, this is a display filter only.
 const CHAMPS_HIDDEN_FROM_COHERENCE_TABLE = new Set(["montant_lettres"]);
 
+// The 3 real cross-field écarts compute_inconsistencies produces (RIB
+// direct vs. reconstructed, montant en lettres vs. en chiffres, N° L-CN
+// OCR vs. code-barres) don't correspond to any single row of the
+// duplicated-fields table above — each compares two *different* fields,
+// not two occurrences of the same one — hence a banner below the table
+// instead of trying to force them into it.
+const CROSS_FIELD_DISCREPANCY_LABELS: Record<string, string> = {
+  rib_tire_vs_reconstitution_4_segments: "RIB direct ≠ RIB reconstitué depuis les 4 sous-champs",
+  montant_lettres_vs_chiffres: "Montant en lettres ≠ montant en chiffres",
+  numero_lcn_vs_code_barres: "N° L-CN (OCR) ≠ N° L-CN (code-barres)",
+};
+
 const PROCESSING_PHASES = [
   "Lecture du scan · binarisation et détection des zones",
   "Extraction OCR des champs dupliqués",
@@ -707,6 +719,32 @@ function ChampsCard({ traite }: { traite: TraiteDetail }) {
           )}
         </tbody>
       </table>
+      {traite.cross_field_discrepancies.length > 0 && (
+        <div style={{ padding: "10px 14px", borderTop: `1px solid ${colors.dividerLight}`, display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted }}>
+            Écarts croisés détectés
+          </span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {traite.cross_field_discrepancies.map((code) => (
+              <span
+                key={code}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "2px 8px",
+                  borderRadius: 11,
+                  whiteSpace: "nowrap",
+                  color: colors.orangeText,
+                  background: colors.orangeBg,
+                  border: `1px solid ${colors.orangeBorder}`,
+                }}
+              >
+                ⚠ {CROSS_FIELD_DISCREPANCY_LABELS[code] ?? code}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -815,6 +853,16 @@ function NlpCard({ traite }: { traite: TraiteDetail }) {
                 </span>
               )}
             </div>
+            )}
+            {/* The spec presents Domiciliation alongside the RIB
+                reconstruction ("Domiciliation + Code étab./agence/compte/
+                clé : OCR structuré -> reconstitution RIB") — placed here
+                rather than a new card for a single text field. */}
+            {n.role === "rib" && traite.domiciliation && (
+              <div style={{ marginLeft: 56, fontSize: 11.5, color: colors.textSecondary }}>
+                <span style={{ color: colors.textMuted }}>Domiciliation : </span>
+                {traite.domiciliation}
+              </div>
             )}
           </div>
         );

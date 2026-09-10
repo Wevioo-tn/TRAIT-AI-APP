@@ -91,6 +91,8 @@ function baseTraite(overrides: Partial<TraiteDetail> = {}): TraiteDetail {
       identification_ok: true,
       coverage_ok: true,
     },
+    domiciliation: null,
+    cross_field_discrepancies: [],
     ...overrides,
   };
 }
@@ -185,6 +187,30 @@ describe("AnalysisPage", () => {
     renderAnalysisPage(traite);
     await screen.findByText("Échéance");
     expect(screen.getByText("⚠ Écart")).toBeInTheDocument();
+  });
+
+  it("shows the cross-field discrepancies banner with a human label per code", async () => {
+    const traite = baseTraite({
+      cross_field_discrepancies: [
+        "rib_tire_vs_reconstitution_4_segments",
+        "montant_lettres_vs_chiffres",
+        "numero_lcn_vs_code_barres",
+      ],
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText("Écarts croisés détectés")).toBeInTheDocument();
+    expect(screen.getByText(/RIB direct ≠ RIB reconstitué depuis les 4 sous-champs/)).toBeInTheDocument();
+    expect(screen.getByText(/Montant en lettres ≠ montant en chiffres/)).toBeInTheDocument();
+    expect(screen.getByText(/N° L-CN \(OCR\) ≠ N° L-CN \(code-barres\)/)).toBeInTheDocument();
+  });
+
+  it("hides the cross-field discrepancies banner when there are none", async () => {
+    renderAnalysisPage(baseTraite({ cross_field_discrepancies: [] }));
+    await screen.findByText("011570763437");
+
+    expect(screen.queryByText("Écarts croisés détectés")).not.toBeInTheDocument();
   });
 
   it("shows the read-only IMX facture context distinct from the cashier's own saisie field", async () => {
@@ -390,6 +416,52 @@ describe("AnalysisPage", () => {
     // The RIB row's own 100% score already says this — no separate
     // "Identifié par RIB" badge repeating it under the row itself.
     expect(screen.queryByText("Identifié par RIB")).not.toBeInTheDocument();
+  });
+
+  it("shows the domiciliation text under the RIB row when the model returns one", async () => {
+    const traite = baseTraite({
+      rapprochements_nlp: [
+        {
+          id: "n1",
+          role: "rib",
+          valeur_scan: "11003000291700178836",
+          valeur_referentiel: "11003000291700178836",
+          score: "100.00",
+          code_adherent_matche: null,
+          code_debiteur_matche: "DEB-1001",
+          methode_identification: "rib",
+          alerte_ecart_nom: false,
+        },
+      ],
+      domiciliation: "UBCI Agence Paris, Tunis",
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.getByText("UBCI Agence Paris, Tunis")).toBeInTheDocument();
+  });
+
+  it("shows no domiciliation line when the model didn't return one", async () => {
+    const traite = baseTraite({
+      rapprochements_nlp: [
+        {
+          id: "n1",
+          role: "rib",
+          valeur_scan: "11003000291700178836",
+          valeur_referentiel: "11003000291700178836",
+          score: "100.00",
+          code_adherent_matche: null,
+          code_debiteur_matche: "DEB-1001",
+          methode_identification: "rib",
+          alerte_ecart_nom: false,
+        },
+      ],
+      domiciliation: null,
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.queryByText(/Domiciliation/)).not.toBeInTheDocument();
   });
 
   it("flags a RIB-confirmed débiteur whose scanned name doesn't corroborate", async () => {

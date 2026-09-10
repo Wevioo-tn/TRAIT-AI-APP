@@ -145,6 +145,8 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
             if control_rollup is not None
             else None
         ),
+        domiciliation=traite.domiciliation,
+        cross_field_discrepancies=traite.cross_field_discrepancies or [],
     )
 
 

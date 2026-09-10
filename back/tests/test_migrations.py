@@ -101,6 +101,18 @@ def test_traites_has_nullable_montant_avoirs_saisi(sync_engine):
     assert columns["montant_avoirs_saisi"]["nullable"] is True
 
 
+def test_traites_has_domiciliation_and_cross_field_discrepancies(sync_engine):
+    """TR-116: two real, already-computed values (the scanned Domiciliation
+    text, and compute_inconsistencies' cross-field écarts) that used to be
+    silently dropped/invisible — now persisted columns on traites."""
+    inspector = inspect(sync_engine)
+    columns = {c["name"]: c for c in inspector.get_columns("traites")}
+    assert "domiciliation" in columns
+    assert columns["domiciliation"]["nullable"] is True
+    assert "cross_field_discrepancies" in columns
+    assert columns["cross_field_discrepancies"]["nullable"] is True
+
+
 def test_verifications_manuelles_unique_per_traite_and_code(sync_engine):
     inspector = inspect(sync_engine)
     uniques = inspector.get_unique_constraints("verifications_manuelles")

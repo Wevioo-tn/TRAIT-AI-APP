@@ -244,6 +244,12 @@ class TestRibFirstIdentification:
         tire_row = next(n for n in nlp if n.role == RoleNlp.TIRE)
         assert tire_row.methode_identification == MethodeIdentification.RIB
         assert tire_row.alerte_ecart_nom is True
+        # Real bug, found live: this exact "SPG" vs "LA MÉDITERRANÉENNE"
+        # scores exactly 0.0, and best_match used to leave
+        # valeur_referentiel at None in that case — the reviewer could see
+        # the alert but not which name it was actually compared against
+        # (see nlp_matching.py's own regression test for the root cause).
+        assert tire_row.valeur_referentiel == "LA MÉDITERRANÉENNE"
 
         entries = db_session.scalars(
             select(AuditLogEntry).where(AuditLogEntry.traite_id == traite.id, AuditLogEntry.action == "ecart_rib_nom")
@@ -441,6 +447,7 @@ class TestRibReconstructionFromSubfields:
         assert "rib_tire_vs_reconstitution_4_segments" not in self._incoherences_from_audit(db_session, traite.id)
         assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
         assert result.code_debiteur == "DEB-1001"
+        assert result.cross_field_discrepancies == []  # TR-116: persisted snapshot, not just audit_log
 
     def test_disagreeing_readings_flag_an_inconsistency_and_block_auto_confirm(self, db_session, tmp_path):
         """Even though the name corroboration would otherwise be perfect,
@@ -463,6 +470,7 @@ class TestRibReconstructionFromSubfields:
 
         assert "rib_tire_vs_reconstitution_4_segments" in self._incoherences_from_audit(db_session, traite.id)
         assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+        assert result.cross_field_discrepancies == ["rib_tire_vs_reconstitution_4_segments"]
 
     def test_only_reconstructed_rib_exploitable_is_used_alone_without_false_disagreement(self, db_session, tmp_path):
         """rib_tire's own dedicated box illegible on this scan — the
@@ -487,6 +495,7 @@ class TestRibReconstructionFromSubfields:
         assert "rib_tire_vs_reconstitution_4_segments" not in self._incoherences_from_audit(db_session, traite.id)
         assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
         assert result.code_debiteur == "DEB-1001"
+        assert result.cross_field_discrepancies == []
 
 
 def test_known_fields_land_in_champs_extraits_correctly(db_session, tmp_path):
@@ -499,6 +508,30 @@ def test_known_fields_land_in_champs_extraits_correctly(db_session, tmp_path):
         select(ChampExtrait).where(ChampExtrait.traite_id == traite.id, ChampExtrait.nom_champ == "montant_lettres")
     ).all()
     assert {c.valeur for c in montant_lettres} == {"Huit mille cent dix-sept dinars, 504 millimes"}
+
+
+def test_domiciliation_is_persisted_when_the_model_returns_it(db_session, tmp_path):
+    """TR-122 already extracted domiciliation_texte via the VLM prompt, but
+    execute_analysis never read ROLE_DOMICILIATION from result.parties —
+    the value arrived and was silently dropped. Now persisted as-is, no
+    validation (a single, unique-occurrence attribute of the bill, not a
+    duplicated field or a referential comparison)."""
+    traite = _make_traite_with_documents(db_session, tmp_path)
+    _seed_referential(db_session)
+
+    extractor = StubExtractor(domiciliation_texte="UBCI Agence Paris, Tunis")
+    result = execute_analysis(traite.id, db_session, extractor)
+
+    assert result.domiciliation == "UBCI Agence Paris, Tunis"
+
+
+def test_domiciliation_is_none_when_the_model_does_not_return_one(db_session, tmp_path):
+    traite = _make_traite_with_documents(db_session, tmp_path)
+    _seed_referential(db_session)
+
+    result = execute_analysis(traite.id, db_session, StubExtractor())  # domiciliation_texte defaults to None
+
+    assert result.domiciliation is None
 
 
 def test_missing_party_text_yields_ecarts_a_traiter(db_session, tmp_path):
@@ -766,6 +799,7 @@ class TestMontantLettresVsChiffres:
 
         assert "montant_lettres_vs_chiffres" not in self._incoherences_from_audit(db_session, traite.id)
         assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+        assert result.cross_field_discrepancies == []
 
     def test_discordant_montants_flag_inconsistency_and_block_auto_confirm(self, db_session, tmp_path):
         """Even a RIB that matches cleanly must not auto-confirm past a
@@ -788,6 +822,7 @@ class TestMontantLettresVsChiffres:
 
         assert "montant_lettres_vs_chiffres" in self._incoherences_from_audit(db_session, traite.id)
         assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+        assert result.cross_field_discrepancies == ["montant_lettres_vs_chiffres"]
 
     def test_internally_incoherent_montant_lettres_skips_cross_check(self, db_session, tmp_path):
         """One side already disagreeing with itself (its own 2 occurrences)
@@ -858,6 +893,7 @@ class TestNumeroLcnVsCodeBarres:
 
         assert "numero_lcn_vs_code_barres" not in self._incoherences_from_audit(db_session, traite.id)
         assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+        assert result.cross_field_discrepancies == []
 
     def test_discordant_barcode_flags_inconsistency_and_blocks_auto_confirm(self, db_session, tmp_path, monkeypatch):
         """Even a RIB that matches cleanly must not auto-confirm past a
@@ -881,6 +917,7 @@ class TestNumeroLcnVsCodeBarres:
 
         assert "numero_lcn_vs_code_barres" in self._incoherences_from_audit(db_session, traite.id)
         assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+        assert result.cross_field_discrepancies == ["numero_lcn_vs_code_barres"]
 
     def test_no_barcode_detected_leaves_behavior_unchanged(self, db_session, tmp_path, monkeypatch):
         """Most real scans (cropped, rotated, low quality) won't have a

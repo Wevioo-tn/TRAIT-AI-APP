@@ -154,6 +154,8 @@ export interface TraiteDetail extends TraiteRead {
   montant_avoirs_saisi: string | null;
   debtor_coverage: DebtorCoverageRead | null;
   control_rollup: DebtorControlRollupRead | null;
+  domiciliation: string | null;
+  cross_field_discrepancies: string[];
 }
 
 export interface TraitePage {
