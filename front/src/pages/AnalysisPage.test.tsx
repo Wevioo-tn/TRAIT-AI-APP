@@ -4,6 +4,7 @@ import { Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api/client";
+import { ApiError } from "../api/client";
 import type { TraiteDetail } from "../api/types";
 import { renderWithProviders } from "../test/test-utils";
 import AnalysisPage from "./AnalysisPage";
@@ -16,6 +17,7 @@ vi.mock("../api/client", async () => {
     getTraiteStatus: vi.fn(),
     updateVerification: vi.fn(),
     updateMontantAvoirs: vi.fn(),
+    createDecision: vi.fn(),
     getDocumentBlob: vi.fn(),
   };
 });
@@ -277,54 +279,68 @@ describe("AnalysisPage", () => {
     expect(screen.getByText("Couverture insuffisante")).toBeInTheDocument();
   });
 
-  it("shows one OK/KO badge per rubrique in the control rollup strip", async () => {
-    renderAnalysisPage(baseTraite());
-    await screen.findByText("011570763437");
-
-    expect(screen.getByText(/✓ Mentions/)).toBeInTheDocument();
-    expect(screen.getByText(/✓ Champs dupliqués/)).toBeInTheDocument();
-    expect(screen.getByText(/✓ Dates/)).toBeInTheDocument();
-    expect(screen.getByText(/✓ Identification/)).toBeInTheDocument();
-    expect(screen.getByText(/✓ Couverture/)).toBeInTheDocument();
-  });
-
-  it("flags only the failing rubrique in the control rollup strip", async () => {
-    const traite = baseTraite({
-      control_rollup: {
-        mandatory_mentions_ok: false,
-        duplicated_fields_ok: true,
-        date_rules_ok: true,
-        identification_ok: true,
-        coverage_ok: true,
-      },
-    });
-    renderAnalysisPage(traite);
-    await screen.findByText("011570763437");
-
-    expect(screen.getByText(/✗ Mentions/)).toBeInTheDocument();
-    expect(screen.getByText(/✓ Champs dupliqués/)).toBeInTheDocument();
-  });
-
-  it("hides the control rollup strip when the debtor isn't resolved yet", async () => {
-    const traite = baseTraite({ control_rollup: null });
-    renderAnalysisPage(traite);
-    await screen.findByText("011570763437");
-
-    // "Mentions" alone also matches the unrelated MentionsCard's own
-    // header ("Mentions obligatoires...") — the rollup badge is specific
-    // (prefixed with its ✓/✗ icon), that unrelated card's title isn't.
-    expect(screen.queryByText(/[✓✗] Mentions/)).not.toBeInTheDocument();
-  });
-
   it("hides the coverage summary when the debtor isn't resolved yet", async () => {
     const traite = baseTraite({ debtor_coverage: null });
     renderAnalysisPage(traite);
     await screen.findByText("011570763437");
 
-    // The rollup strip's own "Couverture" badge is a different, more
-    // specific bit of UI (see the ✓/✗-prefixed rollup tests above) — this
-    // checks CoverageSummary's own distinctive label isn't rendered.
     expect(screen.queryByText(/Couverture facture\/IP du débiteur/)).not.toBeInTheDocument();
+  });
+
+  describe("Valider button", () => {
+    it("is disabled when the backend's own bloque flag is true, even with a title explaining why", async () => {
+      renderAnalysisPage(baseTraite({ bloque: true, motif_blocage: "Écarts automatiques non résolus (OCR/NLP)" }));
+      await screen.findByText("011570763437");
+
+      const button = screen.getByRole("button", { name: "✓ Valider" });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", "Écarts automatiques non résolus (OCR/NLP)");
+    });
+
+    it("calls createDecision(type=validee) and shows a success toast when clicked while unblocked", async () => {
+      mockedApi.createDecision.mockResolvedValue({
+        id: "d1",
+        type: "validee",
+        commentaire: null,
+        decide_par: "h.mansouri",
+        decide_le: new Date().toISOString(),
+      });
+      renderAnalysisPage(baseTraite({ bloque: false, recommandation: { titre: "Valider la traite", detail: "Tous les contrôles automatiques et manuels sont levés." } }));
+      await screen.findByText("011570763437");
+
+      const button = screen.getByRole("button", { name: "✓ Valider" });
+      expect(button).toBeEnabled();
+      await userEvent.click(button);
+
+      expect(mockedApi.createDecision).toHaveBeenCalledWith("t1", "validee");
+      expect(await screen.findByText("Traite validée")).toBeInTheDocument();
+    });
+
+    it("hides the button and shows the final-decision message once the traite already has a decision", async () => {
+      renderAnalysisPage(
+        baseTraite({
+          bloque: false,
+          decisions: [
+            { id: "d1", type: "validee", commentaire: null, decide_par: "h.mansouri", decide_le: new Date().toISOString() },
+          ],
+        })
+      );
+      await screen.findByText("011570763437");
+
+      expect(screen.queryByRole("button", { name: "✓ Valider" })).not.toBeInTheDocument();
+      expect(screen.getByText("Décision déjà enregistrée")).toBeInTheDocument();
+    });
+
+    it("shows an error toast and never claims success when the backend rejects validation", async () => {
+      mockedApi.createDecision.mockRejectedValue(new ApiError(409, "Écarts automatiques non résolus (OCR/NLP)"));
+      renderAnalysisPage(baseTraite({ bloque: false }));
+      await screen.findByText("011570763437");
+
+      await userEvent.click(screen.getByRole("button", { name: "✓ Valider" }));
+
+      expect(await screen.findByText("Validation impossible")).toBeInTheDocument();
+      expect(screen.queryByText("Traite validée")).not.toBeInTheDocument();
+    });
   });
 
   it("calls updateVerification when a check button is clicked", async () => {

@@ -138,6 +138,32 @@ export default function AnalysisPage() {
     },
   });
 
+  // The backend's own gate (TR-117) is the real authority — bloque already
+  // reflects both the 4 manual checks AND this traite's own automatic
+  // écarts (RIB/nom, champs dupliqués, montant, code-barres). This button
+  // never second-guesses that client-side; a 409 here means the backend
+  // caught something the UI's own state was already stale on (e.g. another
+  // reviewer's change), not a client-side rule of its own.
+  const validateMutation = useMutation({
+    mutationFn: () => api.createDecision(id as string, "validee"),
+    onSuccess: () => {
+      toast.show("ok", "Traite validée", "La décision a été enregistrée.");
+      queryClient.invalidateQueries({ queryKey: ["traites", id] });
+      queryClient.invalidateQueries({ queryKey: ["traites"] });
+    },
+    onError: (error: unknown) => {
+      toast.show(
+        "ko",
+        "Validation impossible",
+        error instanceof ApiError ? error.message : "Erreur inattendue."
+      );
+      // The backend is the source of truth for whether this was actually
+      // blockable — refresh so the UI's own bloque/recommandation catches
+      // up instead of staying stale and letting the reviewer retry blindly.
+      queryClient.invalidateQueries({ queryKey: ["traites", id] });
+    },
+  });
+
   if (detailQuery.isLoading) {
     return <div className="tp-page-pad" style={{ padding: 26, color: colors.textMuted }}>Chargement…</div>;
   }
@@ -206,7 +232,12 @@ export default function AnalysisPage() {
             </>
           ) : (
             <>
-              <VerdictCard traite={traite} />
+              <VerdictCard
+                traite={traite}
+                hasDecision={hasDecision}
+                validating={validateMutation.isPending}
+                onValidate={() => validateMutation.mutate()}
+              />
               <AvoirsCard
                 traite={traite}
                 disabled={hasDecision}
@@ -389,8 +420,24 @@ function DocumentViewer({
   );
 }
 
-function VerdictCard({ traite }: { traite: TraiteDetail }) {
+function VerdictCard({
+  traite,
+  hasDecision,
+  validating,
+  onValidate,
+}: {
+  traite: TraiteDetail;
+  hasDecision: boolean;
+  validating: boolean;
+  onValidate: () => void;
+}) {
   const checkCount = traite.verifications_manuelles.filter((v) => v.statut !== null).length;
+  // The backend (TR-117) is the single source of truth for whether this
+  // traite can actually be validated — bloque already reflects both the 4
+  // manual checks AND this traite's own automatic écarts (RIB/nom, champs
+  // dupliqués, montant, code-barres). This button never invents its own,
+  // separate readiness rule; it just reflects that one.
+  const canValidate = !traite.bloque && !hasDecision;
   return (
     <div style={card}>
       <div style={cardHeader}>
@@ -410,75 +457,44 @@ function VerdictCard({ traite }: { traite: TraiteDetail }) {
         <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.7, color: colors.textMuted }}>État</span>
           <span style={{ fontFamily: fonts.mono, fontSize: 15, fontWeight: 600, color: traite.bloque ? colors.orange : colors.green }}>
-            {traite.bloque ? "Bloqué" : "Prêt"}
+            {hasDecision ? traite.statut : traite.bloque ? "Bloqué" : "Prêt"}
           </span>
         </div>
       </div>
-      <div style={{ padding: "12px 14px", borderTop: `1px solid ${colors.dividerLight}`, background: traite.bloque ? "#FDF1E2" : "#E8F4ED" }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: traite.bloque ? colors.orangeText : colors.greenText }}>
-          {traite.recommandation.titre}
+      <div style={{ padding: "12px 14px", borderTop: `1px solid ${colors.dividerLight}`, background: traite.bloque ? "#FDF1E2" : "#E8F4ED", display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: traite.bloque ? colors.orangeText : colors.greenText }}>
+            {hasDecision ? "Décision déjà enregistrée" : traite.recommandation.titre}
+          </div>
+          <div style={{ fontSize: 11.5, color: traite.bloque ? "#8A5312" : colors.greenText, lineHeight: 1.5, marginTop: 3 }}>
+            {hasDecision
+              ? "Cette traite a déjà une décision finale — plus aucune action possible ici."
+              : traite.recommandation.detail}
+          </div>
         </div>
-        <div style={{ fontSize: 11.5, color: traite.bloque ? "#8A5312" : colors.greenText, lineHeight: 1.5, marginTop: 3 }}>
-          {traite.recommandation.detail}
-        </div>
-      </div>
-      {traite.control_rollup && <ControlRollupStrip rollup={traite.control_rollup} />}
-    </div>
-  );
-}
-
-// BPMN Phase 2, étape 10 — "Visualiser le résultat OK/KO par rubrique sur
-// l'écran principal", rolled up across every bill this app currently
-// knows for this bill's resolved débiteur (not scoped to "this remise"
-// yet — see backend's app/services/control_rollup.py). A rollup of
-// verdicts already shown in detail elsewhere on this page, not new
-// information — hence a compact strip here, not another full card.
-type ControlRollup = NonNullable<TraiteDetail["control_rollup"]>;
-
-const RUBRIQUE_LABELS: [keyof ControlRollup, string][] = [
-  ["mandatory_mentions_ok", "Mentions"],
-  ["duplicated_fields_ok", "Champs dupliqués"],
-  ["date_rules_ok", "Dates"],
-  ["identification_ok", "Identification"],
-  ["coverage_ok", "Couverture"],
-];
-
-function ControlRollupStrip({ rollup }: { rollup: ControlRollup }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 6,
-        padding: "9px 14px",
-        borderTop: `1px solid ${colors.dividerLight}`,
-        background: "#F7F9FB",
-      }}
-    >
-      {RUBRIQUE_LABELS.map(([key, label]) => {
-        const ok = rollup[key];
-        return (
-          <span
-            key={key}
-            title="Débiteur — toutes traites connues (hors remise)"
+        {!hasDecision && (
+          <button
+            onClick={onValidate}
+            disabled={!canValidate || validating}
+            title={canValidate ? "" : traite.motif_blocage ?? "Validation indisponible."}
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 10.5,
+              flex: "0 0 auto",
+              fontSize: 12,
               fontWeight: 600,
-              padding: "2px 8px",
-              borderRadius: 11,
+              padding: "8px 16px",
+              borderRadius: 5,
+              border: `1px solid ${canValidate ? colors.greenBorder : colors.borderInput}`,
+              background: canValidate ? colors.green : "#fff",
+              color: canValidate ? "#fff" : colors.textMuted,
+              cursor: canValidate && !validating ? "pointer" : "not-allowed",
+              opacity: validating ? 0.7 : 1,
               whiteSpace: "nowrap",
-              color: ok ? colors.greenText : colors.orangeText,
-              background: ok ? colors.greenBg : colors.orangeBg,
-              border: `1px solid ${ok ? colors.greenBorder : colors.orangeBorder}`,
             }}
           >
-            {ok ? "✓" : "✗"} {label}
-          </span>
-        );
-      })}
+            {validating ? "Validation…" : "✓ Valider"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
