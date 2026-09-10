@@ -34,6 +34,7 @@ from app.services.extraction import (
     CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
+    ROLE_ORDRE,
     ROLE_TIRE,
     ROLE_TIREUR,
     ExtractionResult,
@@ -294,6 +295,105 @@ class TestRibFirstIdentification:
         assert tire_row.code_debiteur_matche == "DEB-2002"
         assert tire_row.methode_identification == MethodeIdentification.RIB
         assert tire_row.alerte_ecart_nom is False
+
+
+class TestRibRowAndOrdreCorroboration:
+    """TR-115: an explicit RIB row in rapprochements_nlp (UC-01, étape 4),
+    and a real (if scoped-down) check on "Payer à l'ordre de" against the
+    resolved adhérent (Synthèse d'analyse : Traite, "cohérence avec
+    contrat IMX" — no contracts model exists here, so this compares
+    against the adhérent's own raison_sociale only, documented as a
+    deliberate scope limit, not the full spec claim)."""
+
+    def _rib_pair(self, rib: str) -> list[FieldCandidate]:
+        return [FieldCandidate(CHAMP_RIB_TIRE, 1, rib), FieldCandidate(CHAMP_RIB_TIRE, 2, rib)]
+
+    def test_rib_row_present_at_100_when_rib_matches(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=self._rib_pair(RIB_DEB_1001),
+            parties=[PartyCandidate(ROLE_TIREUR, "ADACTIM"), PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE")],
+        )
+        execute_analysis(traite.id, db_session, extractor)
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        rib_row = next(n for n in nlp if n.role == RoleNlp.RIB)
+        assert rib_row.valeur_scan == RIB_DEB_1001
+        assert rib_row.valeur_referentiel == RIB_DEB_1001
+        assert rib_row.score == 100.0
+        assert rib_row.code_debiteur_matche == "DEB-1001"
+        assert rib_row.methode_identification == MethodeIdentification.RIB
+
+    def test_rib_row_present_at_0_when_no_coherent_rib(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        result = execute_analysis(traite.id, db_session, StubExtractor())  # no RIB emitted at all
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        rib_row = next(n for n in nlp if n.role == RoleNlp.RIB)
+        assert rib_row.valeur_scan == ""
+        assert rib_row.valeur_referentiel is None
+        assert rib_row.score == 0.0
+        assert rib_row.code_debiteur_matche is None
+        assert result.statut == TraiteStatut.ECARTS_A_TRAITER
+
+    def test_ordre_scored_against_resolved_adherent_once_debiteur_known(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=self._rib_pair(RIB_DEB_1001),
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+                PartyCandidate(ROLE_ORDRE, "ADACTIM"),  # matches the resolved adhérent exactly
+            ],
+        )
+        execute_analysis(traite.id, db_session, extractor)
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        ordre_row = next(n for n in nlp if n.role == RoleNlp.ORDRE)
+        assert ordre_row.valeur_referentiel == "ADACTIM"
+        assert ordre_row.score == 100.0
+        assert ordre_row.code_adherent_matche == "ADH-1001"
+
+    def test_ordre_mismatch_never_blocks_auto_confirm(self, db_session, tmp_path):
+        """A low ordre/adhérent score is informational only — the spec
+        doesn't say this écart should block, unlike the RIB/nom check on
+        the tiré (TR-102)."""
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(
+            fields=self._rib_pair(RIB_DEB_1001),
+            parties=[
+                PartyCandidate(ROLE_TIREUR, "ADACTIM"),
+                PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+                PartyCandidate(ROLE_ORDRE, "UNE SOCIETE SANS AUCUN RAPPORT"),
+            ],
+        )
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        ordre_row = next(n for n in nlp if n.role == RoleNlp.ORDRE)
+        assert ordre_row.score < 50.0
+        # Still auto-confirms — a bad ordre/adhérent score never affects statut.
+        assert result.statut == TraiteStatut.CONTROLE_MANUEL_REQUIS
+
+    def test_ordre_stays_unscored_when_no_debiteur_resolved(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+
+        extractor = _FakeExtractor(fields=[], parties=[PartyCandidate(ROLE_ORDRE, "ADACTIM")])
+        execute_analysis(traite.id, db_session, extractor)
+
+        nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
+        ordre_row = next(n for n in nlp if n.role == RoleNlp.ORDRE)
+        assert ordre_row.valeur_referentiel is None
+        assert ordre_row.score == 0.0
 
 
 class TestRibReconstructionFromSubfields:

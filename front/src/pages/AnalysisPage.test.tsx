@@ -364,6 +364,34 @@ describe("AnalysisPage", () => {
     expect(screen.getByText("Nom seul — à confirmer")).toBeInTheDocument();
   });
 
+  it("shows a dedicated RIB row without a redundant méthode badge under itself", async () => {
+    const traite = baseTraite({
+      rapprochements_nlp: [
+        {
+          id: "n1",
+          role: "rib",
+          valeur_scan: "11003000291700178836",
+          valeur_referentiel: "11003000291700178836",
+          score: "100.00",
+          code_adherent_matche: null,
+          code_debiteur_matche: "DEB-1001",
+          methode_identification: "rib",
+          alerte_ecart_nom: false,
+        },
+      ],
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    // Appears twice: once as the scanned value, once as the matched
+    // référentiel value (a real RIB match shows the same digits both
+    // sides).
+    expect(screen.getAllByText("11003000291700178836")).toHaveLength(2);
+    // The RIB row's own 100% score already says this — no separate
+    // "Identifié par RIB" badge repeating it under the row itself.
+    expect(screen.queryByText("Identifié par RIB")).not.toBeInTheDocument();
+  });
+
   it("flags a RIB-confirmed débiteur whose scanned name doesn't corroborate", async () => {
     const traite = baseTraite({
       rapprochements_nlp: [

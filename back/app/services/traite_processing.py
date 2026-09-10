@@ -477,17 +477,56 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
             alerte_ecart_nom=drawee_alert,
         )
     )
-    # "Ordre" (bénéficiaire déclaré) isn't matched against a referential —
-    # validating it needs a contracts data model this project doesn't have.
-    # Recorded as scanned text only, for now (methode_identification stays
-    # its NOM_SEUL default — never resolved by any hard key).
+    # TR-115: an explicit RIB row (UC-01, étape 4), so a reviewer sees the
+    # actual RIB match itself instead of only inferring it from the
+    # "Identifié par RIB" badge under TIREUR/TIRE. The referential value is
+    # ``rib`` itself when matched — match_debiteur_by_rib only ever returns
+    # a non-null code_debiteur when imx.debiteurs.rib == rib exactly, so
+    # there's no separate value to fetch. Score is binary (100/0): an exact
+    # lookup has no partial-credit notion the way a fuzzy name match does.
+    rib_matched = rib_match is not None and rib_match.code_debiteur is not None
+    session.add(
+        RapprochementNlp(
+            traite_id=traite_id,
+            role=RoleNlp.RIB,
+            valeur_scan=rib or "",
+            valeur_referentiel=rib if rib_matched else None,
+            score=100.0 if rib_matched else 0.0,
+            code_debiteur_matche=rib_match.code_debiteur if rib_matched else None,
+            methode_identification=MethodeIdentification.RIB if rib_matched else MethodeIdentification.NOM_SEUL,
+        )
+    )
+
+    # "Ordre" (bénéficiaire déclaré) — Synthèse d'analyse : Traite, "Payer à
+    # l'ordre de : bénéficiaire = Adhérent → NLP, cohérence avec contrat
+    # IMX". No contracts data model exists in this app, so this compares
+    # against the one already-resolved adhérent's own raison_sociale only
+    # (a single comparison, not a table search — same corroboration
+    # pattern TIREUR/TIRE already use once a débiteur is known by RIB) —
+    # never against "the real contract" the spec describes. Purely
+    # informational: unlike drawee_alert, a low score here never affects
+    # ``clean``/the traite's statut — the spec doesn't say this écart
+    # should block, unlike the RIB/nom check on the tiré (TR-102), so
+    # nothing here invents that.
+    if code_adherent is not None:
+        adherent_for_payee = adherents_by_code.get(code_adherent)
+        payee_corrob = (
+            best_match(payee_text, [(code_adherent, adherent_for_payee.raison_sociale)])
+            if adherent_for_payee is not None
+            else best_match(None, [])
+        )
+        payee_score, payee_reference = payee_corrob.score, payee_corrob.reference_value
+    else:
+        payee_score, payee_reference = 0.0, None
+
     session.add(
         RapprochementNlp(
             traite_id=traite_id,
             role=RoleNlp.ORDRE,
             valeur_scan=payee_text or "",
-            valeur_referentiel=None,
-            score=0,
+            valeur_referentiel=payee_reference,
+            score=payee_score,
+            code_adherent_matche=code_adherent if payee_reference is not None else None,
         )
     )
 

@@ -776,7 +776,13 @@ function NlpCard({ traite }: { traite: TraiteDetail }) {
                 (a RIB hit, unique in imx.debiteurs) or a fuzzy name guess
                 that still needs manual confirmation — a bare score can't
                 tell them that (see BACKLOG.md's RIB-first identification
-                story). */}
+                story). Kept for TIREUR/TIRE (still meaningful there — it's
+                the ONLY visible signal of how they were resolved) but
+                suppressed on the dedicated RIB row itself (TR-115): that
+                row's own 100/0 score already says exactly this, repeating
+                it as a badge under itself would be circular, not extra
+                information. */}
+            {n.role !== "rib" && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 56 }}>
               <span
                 style={{
@@ -809,6 +815,7 @@ function NlpCard({ traite }: { traite: TraiteDetail }) {
                 </span>
               )}
             </div>
+            )}
           </div>
         );
       })}

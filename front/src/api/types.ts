@@ -17,7 +17,7 @@ export type Face = "recto" | "verso";
 export type VerificationCode = "sigTire" | "accept" | "sigTireur" | "endos";
 export type StatutVerification = "conforme" | "anomalie";
 export type TypeDecision = "validee" | "renvoi" | "fraude";
-export type RoleNlp = "tireur" | "tire" | "ordre";
+export type RoleNlp = "tireur" | "tire" | "ordre" | "rib";
 export type MentionStatut = "ok" | "warn" | "absent";
 export type MethodeIdentification = "rib" | "nom_seul";
 

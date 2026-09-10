@@ -48,6 +48,10 @@ class RoleNlp(str, enum.Enum):
     TIREUR = "tireur"
     TIRE = "tire"
     ORDRE = "ordre"
+    # TR-115: a dedicated row so a reviewer sees the actual RIB match
+    # explicitly (UC-01 etape 4) instead of only inferring it from the
+    # "Identifie par RIB" badge under TIREUR/TIRE.
+    RIB = "rib"
 
 
 class MethodeIdentification(str, enum.Enum):
