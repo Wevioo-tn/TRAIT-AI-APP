@@ -19,6 +19,7 @@ import { colors, fonts } from "../theme";
 const CHAMP_LABELS: Record<string, string> = {
   numero_lcn: "N° L-CN",
   montant_chiffres: "Montant en chiffres",
+  montant_lettres: "Montant en lettres",
   echeance: "Échéance",
   date_creation: "Date de création",
   rib_tire: "RIB tiré",
@@ -32,9 +33,14 @@ const CHAMP_LABELS: Record<string, string> = {
   cle_rib: "Clé RIB",
 };
 
-// Not shown in the "Contrôle de cohérence des champs dupliqués" table (per
-// your call) — the data itself is untouched, this is a display filter only.
-const CHAMPS_HIDDEN_FROM_COHERENCE_TABLE = new Set(["montant_lettres"]);
+// montant_lettres used to be excluded from the "Contrôle de cohérence des
+// champs dupliqués" table (per an earlier call) — reversed: it's now shown
+// like every other duplicated field. Its own coherence status had ended up
+// with nowhere left to appear at all once the cross-field discrepancies
+// banner stopped showing plain field names (that banner was the only other
+// place it was ever visible, and only by accident, as a misleading raw
+// code). No field is hidden from this table any more.
+const CHAMPS_HIDDEN_FROM_COHERENCE_TABLE = new Set<string>([]);
 
 // The 3 real cross-field écarts compute_inconsistencies produces (RIB
 // direct vs. reconstructed, montant en lettres vs. en chiffres, N° L-CN

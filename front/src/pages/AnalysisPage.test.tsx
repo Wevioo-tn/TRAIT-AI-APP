@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -164,7 +164,13 @@ describe("AnalysisPage", () => {
     expect(screen.getByText("✓ Cohérent")).toBeInTheDocument();
   });
 
-  it("hides Montant en lettres from the duplicated-fields coherence table", async () => {
+  it("shows Montant en lettres in the duplicated-fields coherence table like any other field", async () => {
+    // Reversed from an earlier call to hide it here: once the cross-field
+    // discrepancies banner correctly stopped showing plain field names
+    // (that banner used to be the only, accidental place montant_lettres'
+    // own coherence was visible at all), hiding it from this table too
+    // left it with nowhere to appear - found live by the user looking for
+    // exactly this row and not finding it anywhere on the page.
     const traite = baseTraite({
       champs_extraits: [
         { id: "c1", nom_champ: "echeance", occurrence: 1, valeur: "2026-08-28", source: "ocr", confiance: null },
@@ -175,8 +181,23 @@ describe("AnalysisPage", () => {
     });
     renderAnalysisPage(traite);
     await screen.findByText("Échéance");
-    expect(screen.queryByText("Montant en lettres")).not.toBeInTheDocument();
-    expect(screen.queryByText("Huit mille cent dix-sept dinars")).not.toBeInTheDocument();
+    expect(screen.getByText("Montant en lettres")).toBeInTheDocument();
+    expect(screen.getAllByText("Huit mille cent dix-sept dinars").length).toBe(2);
+  });
+
+  it("flags Montant en lettres as an écart when its own two occurrences disagree", async () => {
+    const traite = baseTraite({
+      champs_extraits: [
+        { id: "c1", nom_champ: "montant_lettres", occurrence: 1, valeur: "Huit mille cent dix-sept dinars, 504 millimes", source: "ocr", confiance: null },
+        { id: "c2", nom_champ: "montant_lettres", occurrence: 2, valeur: null, source: "ocr", confiance: null },
+      ],
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("Montant en lettres");
+
+    const row = screen.getByText("Montant en lettres").closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("⚠ Écart")).toBeInTheDocument();
   });
 
   it("flags an incoherent duplicated field", async () => {
