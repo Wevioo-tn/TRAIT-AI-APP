@@ -144,3 +144,69 @@ async def test_traite_detail_exposes_mentions_and_matched_facture(client, tmp_pa
             session.execute(delete(Adherent).where(Adherent.code_adherent == CODE_ADHERENT))
             session.commit()
         engine.dispose()
+
+
+async def test_existing_extraction_is_consistent_across_analysis_blocks(client):
+    from app.db.models.traite import ChampExtrait, RapprochementNlp, RoleNlp, SourceChamp
+    created = await client.post("/api/traites", json=TRAITE_PAYLOAD)
+    bill_id = created.json()["id"]
+    engine = create_engine(get_settings().database_url_test)
+    try:
+        with Session(engine) as session:
+            bill = session.get(Traite, uuid.UUID(bill_id))
+            bill.visual_marks = {"has_signature_tireur": True, "has_cachet_tireur": True}
+            for name, value in (("rib_tire", "21 266 1588623321 88"),
+                                ("date_creation", "07/09/26"), ("echeance", "30/09/25")):
+                session.add(ChampExtrait(traite_id=bill.id, nom_champ=name, occurrence=1,
+                                        valeur=value, source=SourceChamp.OCR))
+            session.add(RapprochementNlp(traite_id=bill.id, role=RoleNlp.TIRE,
+                                        valeur_scan="KAMEL JANDOUBI", score=0))
+            session.add(RapprochementNlp(traite_id=bill.id, role=RoleNlp.RIB,
+                                        valeur_scan="", score=0))
+            session.commit()
+        response = await client.get(f"/api/traites/{bill_id}")
+        assert response.status_code == 200
+        data = response.json()
+        mentions = {m["code"]: m for m in data["mentions"]}
+        assert mentions["nom_tire"]["valeur"] == "KAMEL JANDOUBI"
+        rib = next(n for n in data["rapprochements_nlp"] if n["role"] == "rib")
+        assert rib["valeur_scan"] == mentions["lieu_paiement"]["valeur"]
+        assert rib["valeur_referentiel"] is None
+        assert float(rib["score"]) == 0
+        assert data["regles_dates"][1]["ok"] is False
+        assert data["visual_marks"]["has_signature_tireur"] is True
+        assert mentions["signature_tireur"]["statut"] == "warn"
+        assert data["bloque"] is True
+    finally:
+        engine.dispose()
+
+
+async def test_summary_uses_single_reading_without_promoting_business_amount(client):
+    from app.db.models.traite import ChampExtrait, RapprochementNlp, RoleNlp, SourceChamp
+    response = await client.post("/api/traites", json={})
+    bill_id = response.json()["id"]
+    engine = create_engine(get_settings().database_url_test)
+    try:
+        with Session(engine) as session:
+            bill = session.get(Traite, uuid.UUID(bill_id))
+            for name, value in (("montant_chiffres", "#8117,504#"), ("echeance", "28/08/26")):
+                session.add(ChampExtrait(traite_id=bill.id, nom_champ=name, occurrence=1,
+                                        valeur=value, source=SourceChamp.OCR))
+            session.add(RapprochementNlp(traite_id=bill.id, role=RoleNlp.TIRE,
+                                        valeur_scan="Lot 31, ZI, Chotrana II", score=0))
+            session.commit()
+        result = (await client.get(f"/api/traites/{bill_id}")).json()
+        assert Decimal(result["montant"]) == Decimal("8117.504")
+        assert result["date_echeance"] == "2026-08-28"
+        assert result["tire_nom"] == "Texte OCR : Lot 31, ZI, Chotrana II"
+        assert result["tireur_nom"] is None
+        with Session(engine) as session:
+            bill = session.get(Traite, uuid.UUID(bill_id))
+            assert bill.montant == Decimal("0.001")
+            session.add(ChampExtrait(traite_id=bill.id, nom_champ="montant_chiffres", occurrence=2,
+                                    valeur="9000", source=SourceChamp.OCR))
+            session.commit()
+        conflict = (await client.get(f"/api/traites/{bill_id}")).json()
+        assert Decimal(conflict["montant"]) == Decimal("0.001")
+    finally:
+        engine.dispose()

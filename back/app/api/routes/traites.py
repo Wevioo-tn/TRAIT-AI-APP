@@ -42,6 +42,7 @@ from app.schemas.traite import (
     VerificationUpdate,
 )
 from app.services.audit import log_action
+from app.services.analysis_summary import build_analysis_summary
 from app.services.control_rollup import calculate_debtor_control_rollup
 from app.services.coverage import calculate_debtor_coverage
 from app.services.mentions_rules import evaluate_date_rules, evaluate_mandatory_mentions, find_matching_invoice
@@ -81,7 +82,7 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
     mentions = evaluate_mandatory_mentions(
         traite, traite.champs_extraits, traite.rapprochements_nlp, traite.verifications_manuelles
     )
-    date_rules = evaluate_date_rules(traite, invoice)
+    date_rules = evaluate_date_rules(traite, invoice, traite.champs_extraits)
     # Computed live, not from anything stored on this traite: a debtor's
     # coverage depends on every other bill/saisie known for them, which
     # can change independently of this one bill's own last analysis (see
@@ -95,11 +96,18 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
         else None
     )
 
+    nlp_rows = [RapprochementNlpRead.model_validate(n) for n in traite.rapprochements_nlp]
+    scanned_rib = next((f.valeur for f in sorted(traite.champs_extraits, key=lambda f: f.occurrence)
+                        if f.nom_champ == "rib_tire" and f.valeur), "")
+    for row in nlp_rows:
+        if row.role == "rib":
+            row.valeur_scan = scanned_rib
+
     return TraiteDetail(
-        **TraiteRead.model_validate(traite).model_dump(),
+        **build_analysis_summary(traite),
         documents=[TraiteDocumentRead.model_validate(d) for d in traite.documents],
         champs_extraits=[ChampExtraitRead.model_validate(c) for c in traite.champs_extraits],
-        rapprochements_nlp=[RapprochementNlpRead.model_validate(n) for n in traite.rapprochements_nlp],
+        rapprochements_nlp=nlp_rows,
         verifications_manuelles=[VerificationManuelleRead.model_validate(v) for v in traite.verifications_manuelles],
         decisions=[DecisionRead.model_validate(d) for d in traite.decisions],
         bloque=blocking_state.blocked,
@@ -107,6 +115,7 @@ async def _build_detail(session: AsyncSession, traite: Traite) -> TraiteDetail:
         recommandation=RecommandationRead(
             titre=blocking_state.recommendation.title, detail=blocking_state.recommendation.detail
         ),
+        visual_marks=traite.visual_marks,
         mentions=[MentionRead(code=m.code, label=m.label, valeur=m.value, statut=m.status) for m in mentions],
         regles_dates=[
             RegleDateRead(label=r.label, valeur_a=r.value_a, valeur_b=r.value_b, ok=r.ok) for r in date_rules

@@ -91,7 +91,7 @@ async def calculate_debtor_control_rollup(session: AsyncSession, debtor_code: st
             duplicated_fields_ok = False
 
         invoice = await find_matching_invoice(session, bill)
-        if any(rule.ok is False for rule in evaluate_date_rules(bill, invoice)):
+        if any(rule.ok is False for rule in evaluate_date_rules(bill, invoice, bill.champs_extraits)):
             date_rules_ok = False
 
         nlp_by_role = {row.role: row for row in bill.rapprochements_nlp}

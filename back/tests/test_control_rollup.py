@@ -8,6 +8,7 @@ computed — that's each rubrique's own module's job (mentions_rules.py,
 traite_processing.py, TR-102's RIB matching, coverage.py).
 """
 import uuid
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import create_engine, delete, select, text
@@ -60,9 +61,9 @@ def _make_bill_fully_passing(engine, bill_id: str, code_debiteur: str, *, with_r
         bill.montant = Decimal("5.000")
 
         fields = [
-            ("echeance", "2026-08-28"),
+            ("echeance", (date.today() + timedelta(days=20)).isoformat()),
             ("lieu_creation", "Tunis"),
-            ("date_creation", "2026-08-05"),
+            ("date_creation", (date.today() - timedelta(days=5)).isoformat()),
         ]
         if with_rib_tire:
             fields.append(("rib_tire", "11003000291700178836"))

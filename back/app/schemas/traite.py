@@ -225,6 +225,7 @@ class TraiteDetail(TraiteRead):
     bloque: bool
     motif_blocage: str | None
     recommandation: RecommandationRead
+    visual_marks: dict[str, bool] | None = None
     mentions: list[MentionRead] = []
     regles_dates: list[RegleDateRead] = []
     num_facture_rapprochee: str | None = None

@@ -99,20 +99,28 @@ def _parse_montant(text: str) -> Decimal | None:
 
 
 def _parse_date(text: str) -> date | None:
-    """The extraction prompt asks for AAAA-MM-JJ, but a real model doesn't
-    always comply — fall back to the DD/MM/YYYY format the document itself
-    prints before giving up (never raises)."""
+    """Parse preserved ISO or day-first dates without changing source text.
+
+    Two-digit years use Python's explicit strptime convention: 00-68 map
+    to 2000-2068 and 69-99 to 1969-1999. Invalid dates remain unknown.
+    """
     text = text.strip()
     try:
         return date.fromisoformat(text)
     except ValueError:
         pass
-    for fmt in ("%d/%m/%Y", "%d-%m-%Y"):
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y"):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
             continue
     return None
+
+
+def _coherent_date(values: list[str | None]) -> date | None:
+    """Promote only two valid readings representing the same calendar date."""
+    parsed = [_parse_date(value) if value else None for value in values]
+    return parsed[0] if len(parsed) == 2 and parsed[0] is not None and parsed[0] == parsed[1] else None
 
 
 def _canonicalize_rib(text: str | None) -> str | None:
@@ -274,13 +282,11 @@ def _promote_canonical_identity(traite: Traite, by_field: dict[str, list[str | N
     if montant is not None and 0 < montant < _MAX_MONTANT:
         traite.montant = montant
 
-    echeance_text = _coherent(by_field.get(CHAMP_ECHEANCE, []))
-    echeance = _parse_date(echeance_text) if echeance_text is not None else None
+    echeance = _coherent_date(by_field.get(CHAMP_ECHEANCE, []))
     if echeance is not None:
         traite.date_echeance = echeance
 
-    date_creation_text = _coherent(by_field.get(CHAMP_DATE_CREATION, []))
-    date_creation_traite = _parse_date(date_creation_text) if date_creation_text is not None else None
+    date_creation_traite = _coherent_date(by_field.get(CHAMP_DATE_CREATION, []))
     if date_creation_traite is not None:
         traite.date_creation_traite = date_creation_traite
 
@@ -316,6 +322,7 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
         )
         return traite
 
+    traite.visual_marks = result.visual_marks
     for field in result.fields:
         session.add(
             ChampExtrait(
@@ -506,7 +513,7 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
         RapprochementNlp(
             traite_id=traite_id,
             role=RoleNlp.RIB,
-            valeur_scan=rib or "",
+            valeur_scan=next((value for value in by_field.get(CHAMP_RIB_TIRE, []) if value), ""),
             valeur_referentiel=rib if rib_matched else None,
             score=100.0 if rib_matched else 0.0,
             code_debiteur_matche=rib_match.code_debiteur if rib_matched else None,

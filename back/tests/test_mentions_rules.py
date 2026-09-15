@@ -64,7 +64,8 @@ class TestEvaluateMandatoryMentions:
             _field("date_creation", "2026-08-05"),
             _field("rib_tire", "11003000291700178836"),
         ]
-        nlp = [RapprochementNlp(role=RoleNlp.ORDRE, valeur_scan="SPG", score=Decimal("0"))]
+        nlp = [RapprochementNlp(role=RoleNlp.TIRE, valeur_scan="Scanned debtor", score=0),
+               RapprochementNlp(role=RoleNlp.ORDRE, valeur_scan="SPG", score=Decimal("0"))]
         verifs = [
             VerificationManuelle(code_verification=VerificationCode.SIG_TIREUR, statut=StatutVerification.CONFORME)
         ]
@@ -147,3 +148,45 @@ class TestEvaluateDateRules:
         rules = evaluate_date_rules(traite, invoice=None)
         rule = next(r for r in rules if r.label == "Date de création ≤ date d'échéance")
         assert rule.ok is False
+
+
+def test_scanned_name_presence_does_not_require_imx_match():
+    bill = _traite()
+    row = RapprochementNlp(role=RoleNlp.TIRE, valeur_scan="KAMEL JANDOUBI", score=0)
+    mention = evaluate_mandatory_mentions(bill, [], [row], [])[0]
+    assert mention.value == "KAMEL JANDOUBI"
+    assert mention.status == "ok"
+    bill.debiteur = Debiteur(code_debiteur="OTHER", raison_sociale="Different IMX name", rib="x")
+    assert evaluate_mandatory_mentions(bill, [], [row], [])[0].value == "KAMEL JANDOUBI"
+    assert evaluate_mandatory_mentions(bill, [], [], [])[0].status == "absent"
+
+
+def test_detected_signature_is_not_manual_approval():
+    bill = _traite()
+    bill.visual_marks = {"has_signature_tireur": True, "has_cachet_tireur": False}
+    mention = evaluate_mandatory_mentions(bill, [], [], [])[-1]
+    assert mention.status == "warn"
+    verification = VerificationManuelle(code_verification=VerificationCode.SIG_TIREUR,
+                                        statut=StatutVerification.CONFORME)
+    assert evaluate_mandatory_mentions(bill, [], [], [verification])[-1].status == "ok"
+    verification.statut = StatutVerification.ANOMALIE
+    assert evaluate_mandatory_mentions(bill, [], [], [verification])[-1].status == "warn"
+
+
+def test_date_rules_use_transcribed_two_digit_years_not_main_record():
+    fields = [_field("date_creation", "07/09/26"), _field("echeance", "30/09/25")]
+    rules = evaluate_date_rules(_traite(), None, fields)
+    assert rules[1].value_a == "2026-09-07"
+    assert rules[1].value_b == "2025-09-30"
+    assert rules[1].ok is False
+    assert all(rule.ok is None for rule in evaluate_date_rules(_traite(), None, []))
+    fields.append(ChampExtrait(nom_champ="echeance", occurrence=2, valeur="30/09/26", source=SourceChamp.OCR))
+    assert evaluate_date_rules(_traite(), None, fields)[1].ok is None
+
+
+def test_domiciliation_is_available_without_rib():
+    bill = _traite()
+    bill.domiciliation = "UBCI"
+    mention = next(m for m in evaluate_mandatory_mentions(bill, [], [], []) if m.code == "lieu_paiement")
+    assert mention.value == "UBCI"
+    assert mention.status == "ok"

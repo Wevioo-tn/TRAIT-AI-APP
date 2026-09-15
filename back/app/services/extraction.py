@@ -71,6 +71,7 @@ class PartyCandidate:
 class ExtractionResult:
     fields: list[FieldCandidate] = field(default_factory=list)
     parties: list[PartyCandidate] = field(default_factory=list)
+    visual_marks: dict[str, bool] | None = None
 
 
 class Extractor(Protocol):

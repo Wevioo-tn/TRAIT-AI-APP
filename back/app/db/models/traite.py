@@ -131,6 +131,9 @@ class Traite(Base):
     # on every screen load. Null = never analyzed yet.
     cross_field_discrepancies: Mapped[list[str] | None] = mapped_column(JSONB)
 
+    # Null means detection has not run; false means no clearly detected mark.
+    visual_marks: Mapped[dict[str, bool] | None] = mapped_column(JSONB)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
