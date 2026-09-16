@@ -229,7 +229,7 @@ export default function AnalysisPage() {
           {isProcessing ? (
             <>
               <SkeletonCard title="Verdict de l'agent" rows={3} />
-              <SkeletonCard title="Avoirs par débiteur (saisie manuelle)" rows={2} />
+              {/* <SkeletonCard title="Avoirs par débiteur (saisie manuelle)" rows={2} /> */}
               <SkeletonCard title="Mentions obligatoires de la lettre de change" rows={4} />
               <SkeletonCard title="Contrôle de cohérence des champs dupliqués" rows={4} />
               <SkeletonCard title="Contrôles de dates" rows={3} />
@@ -244,11 +244,11 @@ export default function AnalysisPage() {
                 validating={validateMutation.isPending}
                 onValidate={() => validateMutation.mutate()}
               />
-              <AvoirsCard
+              {/* <AvoirsCard
                 traite={traite}
                 disabled={hasDecision}
                 onSave={(montantAvoirs) => montantAvoirsMutation.mutate(montantAvoirs)}
-              />
+              /> */}
               <MentionsCard traite={traite} />
               <ChampsCard traite={traite} />
               <DateRulesCard traite={traite} />
