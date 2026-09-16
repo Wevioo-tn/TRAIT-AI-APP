@@ -90,15 +90,7 @@ async def test_traite_detail_exposes_mentions_and_matched_facture(client, tmp_pa
             )
             session.commit()
 
-            # Point the recto/verso file paths at real files on disk so
-            # execute_analysis's _read_document can read them.
-            traite = session.get(Traite, uuid.UUID(traite_id))
-            for doc in traite.documents:
-                path = tmp_path / f"{doc.face.value}.jpg"
-                path.write_bytes(b"data")
-                doc.fichier_chemin = str(path)
-            session.commit()
-
+            # Analysis consumes the same database bytes saved by the upload API.
             execute_analysis(
                 uuid.UUID(traite_id),
                 session,

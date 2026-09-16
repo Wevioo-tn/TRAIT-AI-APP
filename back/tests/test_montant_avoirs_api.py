@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.imx import Adherent, Debiteur, Facture, StatutContrat, StatutFacture
-from app.db.models.traite import AuditLogEntry, Traite
+from app.db.models.traite import AuditLogEntry
 from app.services.extraction import StubExtractor
 from app.services.traite_processing import execute_analysis
 
@@ -153,13 +153,7 @@ async def test_traite_detail_keeps_imx_facture_context_distinct_from_cashier_sai
             )
             session.commit()
 
-            traite = session.get(Traite, uuid.UUID(traite_id))
-            for doc in traite.documents:
-                path = tmp_path / f"{doc.face.value}.jpg"
-                path.write_bytes(b"data")
-                doc.fichier_chemin = str(path)
-            session.commit()
-
+            # Analysis consumes the same database bytes saved by the upload API.
             execute_analysis(
                 uuid.UUID(traite_id),
                 session,

@@ -25,9 +25,8 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     environment: str = "development"
 
-    # Backed by a named Docker volume (see docker-compose.yml) so uploads
-    # survive container restarts without polluting the bind-mounted source
-    # tree with binary files.
+    # Legacy upload root, used only for reading/backfilling pre-BYTEA documents.
+    # New uploads are stored in PostgreSQL and do not require a filesystem volume.
     upload_dir: str = "/app/uploads"
     max_upload_size_bytes: int = 15 * 1024 * 1024  # 15 MB
 

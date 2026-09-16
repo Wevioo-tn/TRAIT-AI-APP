@@ -52,6 +52,7 @@ services:
       AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
     volumes:
+      # Legacy uploads only; retain until BYTEA backfill has been verified.
       - uploads_data:/app/uploads
     depends_on:
       postgres: {condition: service_healthy}

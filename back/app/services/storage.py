@@ -1,54 +1,29 @@
-"""File storage abstraction for uploaded scans.
-
-``LocalFileStorage`` is the only implementation today (files on a Docker
-volume). It's kept behind this small interface — not because a swap is
-planned right now, but because if a future deploy ever needs object storage
-instead of a shared volume (e.g. running the backend as multiple replicas),
-this is the one place that changes.
-
-Disk I/O is genuinely blocking, so every public method runs it in a thread
-via Starlette's ``run_in_threadpool`` rather than stalling the async event
-loop.
-"""
-import uuid
+"""Read database-backed documents and legacy files during the storage migration."""
 from pathlib import Path
 
-from starlette.concurrency import run_in_threadpool
-
 from app.core.config import get_settings
+from app.db.models.traite import TraiteDocument
 
 
-class LocalFileStorage:
-    def __init__(self, base_dir: str | None = None) -> None:
-        self.base_dir = Path(base_dir or get_settings().upload_dir)
-
-    def _path_for(self, traite_id: uuid.UUID, face: str, filename: str) -> Path:
-        # basename() defends against path traversal via a crafted filename.
-        safe_name = Path(filename).name
-        return self.base_dir / str(traite_id) / f"{face}__{safe_name}"
-
-    def _save_sync(self, traite_id: uuid.UUID, face: str, filename: str, content: bytes) -> str:
-        path = self._path_for(traite_id, face, filename)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-        return str(path)
-
-    def _delete_sync(self, path: str) -> None:
-        p = Path(path)
-        if p.exists():
-            p.unlink()
-
-    async def save(self, traite_id: uuid.UUID, face: str, filename: str, content: bytes) -> str:
-        return await run_in_threadpool(self._save_sync, traite_id, face, filename, content)
-
-    async def read(self, path: str) -> bytes:
-        return await run_in_threadpool(Path(path).read_bytes)
-
-    async def delete(self, path: str) -> None:
-        await run_in_threadpool(self._delete_sync, path)
+def read_legacy_content(path: str, expected_size: int) -> bytes:
+    """Read only files inside UPLOAD_DIR; reject missing or truncated legacy data."""
+    root = Path(get_settings().upload_dir).resolve()
+    source = Path(path).resolve()
+    if not source.is_relative_to(root):
+        raise ValueError("Legacy document path is outside UPLOAD_DIR.")
+    if expected_size < 0:
+        raise ValueError("Legacy document has an invalid recorded size.")
+    with source.open("rb") as stream:
+        content = stream.read(expected_size + 1)
+    if len(content) != expected_size:
+        raise ValueError("Legacy document size does not match its recorded metadata.")
+    return content
 
 
-def get_storage() -> LocalFileStorage:
-    """FastAPI dependency provider — overridden in tests to point at a
-    throwaway directory instead of the real uploads volume."""
-    return LocalFileStorage()
+def read_document_content(document: TraiteDocument) -> bytes:
+    """Use with a synchronous session, or explicitly load content in async callers."""
+    if document.content is not None:
+        return document.content
+    if document.fichier_chemin is None:
+        raise ValueError("Document has no stored content.")
+    return read_legacy_content(document.fichier_chemin, document.taille_octets)

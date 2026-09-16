@@ -2,6 +2,10 @@
 
 Bill-of-exchange processing with React, FastAPI, PostgreSQL, and Azure OpenAI vision.
 
+Uploaded recto/verso documents are stored as PostgreSQL `BYTEA`, together with
+their metadata. See [document storage and migration](docs/document-storage.md)
+before deploying this version over an existing installation.
+
 ## Docker quick start
 
 Requires Docker Desktop and an initialized application database. The current
@@ -92,8 +96,9 @@ npm run dev
 
 This permanently empties `public.traites` and its dependent tables, including
 extracted fields, document records, matches, verifications, decisions, and audit
-logs. **IMX records, login users, and table definitions are preserved.** Uploaded
-files remain on disk. Stop analysis before clearing to avoid concurrent writes.
+logs. **IMX records, login users, and table definitions are preserved.** Stored
+document bytes are deleted with their document records. Legacy files left in the
+old uploads volume are not removed. Stop analysis before clearing to avoid concurrent writes.
 
 From CMD or PowerShell at the project root:
 

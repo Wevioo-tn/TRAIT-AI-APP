@@ -50,7 +50,7 @@ def _traite_with_documents(recto_ct="image/png", verso_ct="image/png"):
         date_echeance=date(2026, 12, 1), date_creation_traite=date(2026, 9, 1),
     )
     traite.documents = [
-        TraiteDocument(face=face, fichier_nom="scan.png", fichier_chemin="/x/scan.png",
+        TraiteDocument(face=face, fichier_nom="scan.png", content=b"0123456789",
                        content_type=ct, taille_octets=10)
         for face, ct in ((Face.RECTO, recto_ct), (Face.VERSO, verso_ct))
     ]
@@ -324,9 +324,8 @@ def test_vision_extraction_integrates_with_persistence_and_failure_state(db_sess
     traite = _traite_with_documents()
     traite.numero_lcn = "VISION-INTEGRATION"
     for document in traite.documents:
-        path = tmp_path / f"{document.face.value}.png"
-        path.write_bytes(_image())
-        document.fichier_chemin = str(path)
+        document.content = _image()
+        document.taille_octets = len(document.content)
     db_session.add(traite)
     db_session.flush()
     data = _document()

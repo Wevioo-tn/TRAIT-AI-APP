@@ -121,6 +121,11 @@ The health endpoint should return `status: ok`. It checks database connectivity;
 
 ## Later deployments
 
+For an existing installation switching from disk uploads to PostgreSQL `BYTEA`,
+follow [the document storage migration procedure](docs/document-storage.md)
+before the normal deployment steps below. Keep the old uploads volume mounted
+until every legacy document has been migrated and verified.
+
 Back up the staging database before applying new migrations. During a maintenance window:
 
 ```bash
@@ -140,7 +145,10 @@ docker compose -f docker-compose.staging.yml down
 docker compose -f docker-compose.staging.yml up -d
 ```
 
-`down` preserves named volumes; do not add `--volumes` if you need to retain their data. An external PostgreSQL server has its own persistence and backup configuration. Ensure uploaded files are stored in a persistent volume in your staging Compose file.
+`down` preserves named volumes; do not add `--volumes` if you need to retain their data.
+New uploads are stored in PostgreSQL, so database backups include their image bytes.
+Keep the legacy uploads volume available until its documents have been migrated.
+An external PostgreSQL server has its own persistence and backup configuration.
 
 ## Troubleshooting
 

@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, LargeBinary, Numeric, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -173,13 +173,23 @@ class TraiteDocument(Base):
     """The recto / verso scan uploaded for a traite."""
 
     __tablename__ = "traite_documents"
-    __table_args__ = (UniqueConstraint("traite_id", "face", name="uq_traite_documents_traite_face"),)
+    __table_args__ = (
+        UniqueConstraint("traite_id", "face", name="uq_traite_documents_traite_face"),
+        CheckConstraint("content IS NOT NULL OR fichier_chemin IS NOT NULL", name="ck_traite_documents_storage"),
+        CheckConstraint(
+            "content IS NULL OR octet_length(content) = taille_octets",
+            name="ck_traite_documents_content_size",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     traite_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("traites.id"), nullable=False)
     face: Mapped[Face] = mapped_column(SAEnum(Face, name="face"), nullable=False)
     fichier_nom: Mapped[str] = mapped_column(String(255), nullable=False)
-    fichier_chemin: Mapped[str] = mapped_column(String(500), nullable=False)
+    # PostgreSQL BYTEA. Deferred so metadata/detail queries never fetch image payloads.
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    # Transitional fallback for pre-BYTEA uploads; new uploads never write to disk.
+    fichier_chemin: Mapped[str | None] = mapped_column(String(500), nullable=True)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     taille_octets: Mapped[int] = mapped_column(nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -7,8 +7,6 @@ transaction that is rolled back afterwards, so tests never leak state into
 one another either.
 """
 import os
-import shutil
-import tempfile
 
 import pytest
 from alembic import command
@@ -24,7 +22,6 @@ from app.db.session import get_session
 from app.main import app
 from app.services.jwt_auth import create_access_token
 from app.services.password_hash import hash_password
-from app.services.storage import LocalFileStorage, get_storage
 
 settings = get_settings()
 
@@ -42,6 +39,15 @@ TEST_PASSWORD = "secret123"
 @pytest.fixture(scope="session", autouse=True)
 def apply_migrations():
     """Rebuild the test database schema from scratch, once per test session."""
+    # The BYTEA downgrade deliberately refuses to discard stored scans. This
+    # fixture already rebuilds a dedicated test database, so clear test data first.
+    engine = create_engine(settings.database_url_test)
+    try:
+        with engine.begin() as connection:
+            if connection.scalar(text("SELECT to_regclass('public.traites')")):
+                connection.execute(text("TRUNCATE public.traites CASCADE"))
+    finally:
+        engine.dispose()
     os.environ["ALEMBIC_DATABASE_URL"] = settings.database_url_test
     cfg = Config(os.path.join(BACK_DIR, "alembic.ini"))
     command.downgrade(cfg, "base")
@@ -99,13 +105,14 @@ def clean_app_tables(sync_engine):
     with sync_engine.begin() as connection:
         connection.execute(text("TRUNCATE traites CASCADE"))
     yield
+    # API tests commit; do not leak their rows into later transactional unit tests.
+    with sync_engine.begin() as connection:
+        connection.execute(text("TRUNCATE traites CASCADE"))
 
 
 @pytest.fixture
-async def client(apply_migrations, clean_app_tables):
-    """An httpx AsyncClient driving the real FastAPI app, with both the DB
-    and file-storage dependencies overridden so tests never touch the dev
-    database or the real uploads volume."""
+async def client(apply_migrations, clean_app_tables, tmp_path, monkeypatch):
+    """Exercise real HTTP routes against an isolated database and legacy directory."""
     test_engine = create_async_engine(settings.database_url_test, future=True)
     test_session_local = async_sessionmaker(bind=test_engine, expire_on_commit=False)
 
@@ -113,11 +120,9 @@ async def client(apply_migrations, clean_app_tables):
         async with test_session_local() as session:
             yield session
 
-    upload_dir = tempfile.mkdtemp(prefix="trait-ai-test-uploads-")
-    test_storage = LocalFileStorage(base_dir=upload_dir)
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
 
     app.dependency_overrides[get_session] = override_get_session
-    app.dependency_overrides[get_storage] = lambda: test_storage
     transport = ASGITransport(app=app)
     token = create_access_token(TEST_USERNAME)
     async with AsyncClient(
@@ -126,4 +131,3 @@ async def client(apply_migrations, clean_app_tables):
         yield ac
     app.dependency_overrides.clear()
     await test_engine.dispose()
-    shutil.rmtree(upload_dir, ignore_errors=True)

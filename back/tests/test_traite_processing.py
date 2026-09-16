@@ -92,14 +92,12 @@ def _make_traite_with_documents(session, tmp_path, *, numero_lcn="011570763437")
 
     for face in (Face.RECTO, Face.VERSO):
         content = f"fake-scan-bytes-{face.value}".encode()
-        file_path = tmp_path / f"{face.value}.jpg"
-        file_path.write_bytes(content)
         session.add(
             TraiteDocument(
                 traite_id=traite.id,
                 face=face,
                 fichier_nom=f"{face.value}.jpg",
-                fichier_chemin=str(file_path),
+                content=content,
                 content_type="image/jpeg",
                 taille_octets=len(content),
             )

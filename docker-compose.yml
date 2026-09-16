@@ -45,9 +45,8 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./back:/app
-      # Named volume shadowing the /app/uploads subdir: uploaded scans
-      # persist across restarts without landing in the bind-mounted source
-      # tree (and therefore never end up in git).
+      # Retained for legacy document reads and BYTEA backfill only.
+      # New uploads are stored in PostgreSQL. See docs/document-storage.md.
       - uploads_data:/app/uploads
     depends_on:
       postgres:

@@ -11,7 +11,6 @@ import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -50,6 +49,7 @@ from app.services.extraction import (
 )
 from app.services.nlp_matching import best_match, match_debiteur_by_rib
 from app.services.nombres import amount_to_words
+from app.services.storage import read_document_content
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def _read_document(traite_id: uuid.UUID, documents: list[TraiteDocument], face: 
     document = next((d for d in documents if d.face == face), None)
     if document is None:
         raise ValueError(f"Document {face.value} manquant pour la traite {traite_id}.")
-    return Path(document.fichier_chemin).read_bytes()
+    return read_document_content(document)
 
 
 def _parse_montant(text: str) -> Decimal | None:

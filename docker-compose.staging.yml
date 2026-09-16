@@ -23,6 +23,7 @@ services:
 
     volumes:
       - ./back:/app
+      # Legacy uploads only; retain until BYTEA backfill has been verified.
       - uploads_data:/app/uploads
 
     networks:

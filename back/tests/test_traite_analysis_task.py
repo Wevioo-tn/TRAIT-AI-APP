@@ -34,14 +34,12 @@ def test_task_processes_traite_end_to_end(sync_engine, tmp_path, monkeypatch):
         for code in VerificationCode:
             session.add(VerificationManuelle(traite_id=traite.id, code_verification=code))
         for face in (Face.RECTO, Face.VERSO):
-            path = tmp_path / f"{face.value}.jpg"
-            path.write_bytes(b"data")
             session.add(
                 TraiteDocument(
                     traite_id=traite.id,
                     face=face,
                     fichier_nom=f"{face.value}.jpg",
-                    fichier_chemin=str(path),
+                    content=b"data",
                     content_type="image/jpeg",
                     taille_octets=4,
                 )

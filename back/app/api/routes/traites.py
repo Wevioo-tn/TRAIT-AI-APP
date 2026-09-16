@@ -1,10 +1,12 @@
 import uuid
 from datetime import date, datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, undefer
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.core.config import get_settings
@@ -46,7 +48,7 @@ from app.services.analysis_summary import build_analysis_summary
 from app.services.control_rollup import calculate_debtor_control_rollup
 from app.services.coverage import calculate_debtor_coverage
 from app.services.mentions_rules import evaluate_date_rules, evaluate_mandatory_mentions, find_matching_invoice
-from app.services.storage import LocalFileStorage, get_storage
+from app.services.storage import read_document_content
 from app.services.traite_processing import PLACEHOLDER_BILL_AMOUNT
 from app.services.verification_rules import evaluate_verifications
 from app.tasks.traite_processing import run_traite_analysis
@@ -263,13 +265,13 @@ async def upload_document(
     file: UploadFile = File(...),
     replace: bool = Query(default=False, description="Remplace le fichier existant pour cette face, s'il y en a un."),
     session: AsyncSession = Depends(get_session),
-    storage: LocalFileStorage = Depends(get_storage),
     current_user: str = Depends(get_current_user),
 ) -> TraiteDocument:
     """Recto/verso upload — both faces are required by the design before an
     analysis can be launched, but that's enforced by the caller (there's
     nothing wrong with a traite that only has one face uploaded so far)."""
-    traite = await session.get(Traite, traite_id)
+    # Serialize uploads for this bill, including concurrent requests for the same face.
+    traite = await session.scalar(select(Traite).where(Traite.id == traite_id).with_for_update())
     if traite is None:
         raise HTTPException(status_code=404, detail="Traite introuvable.")
 
@@ -279,7 +281,8 @@ async def upload_document(
             detail=f"Type de fichier non supporté : {file.content_type}. Formats acceptés : JPEG, PNG, PDF.",
         )
 
-    content = await file.read()
+    # Bound memory use even when a client bypasses browser-side upload limits.
+    content = await file.read(settings.max_upload_size_bytes + 1)
     if len(content) > settings.max_upload_size_bytes:
         raise HTTPException(status_code=413, detail="Fichier trop volumineux (15 Mo maximum).")
 
@@ -295,21 +298,18 @@ async def upload_document(
                     "Ajoutez ?replace=true pour le remplacer."
                 ),
             )
-        await storage.delete(existing.fichier_chemin)
-        await session.delete(existing)
-        await session.flush()
-
     filename = file.filename or "document"
-    path = await storage.save(traite_id, face.value, filename, content)
-
-    document = TraiteDocument(
-        traite_id=traite_id,
-        face=face,
-        fichier_nom=filename,
-        fichier_chemin=path,
-        content_type=file.content_type,
-        taille_octets=len(content),
-    )
+    if len(filename) > 255:
+        raise HTTPException(status_code=422, detail="Filename must not exceed 255 characters.")
+    # Payload, metadata and audit are committed atomically. Keep old legacy files
+    # untouched so a failed transaction cannot destroy the previous scan.
+    document = existing or TraiteDocument(traite_id=traite_id, face=face)
+    document.fichier_nom = filename
+    document.fichier_chemin = None
+    document.content = content
+    document.content_type = file.content_type
+    document.taille_octets = len(content)
+    document.uploaded_at = datetime.now(timezone.utc)
     session.add(document)
 
     await log_action(
@@ -330,19 +330,27 @@ async def download_document(
     traite_id: uuid.UUID,
     face: Face,
     session: AsyncSession = Depends(get_session),
-    storage: LocalFileStorage = Depends(get_storage),
 ) -> Response:
     document = await session.scalar(
-        select(TraiteDocument).where(TraiteDocument.traite_id == traite_id, TraiteDocument.face == face)
+        select(TraiteDocument)
+        .where(TraiteDocument.traite_id == traite_id, TraiteDocument.face == face)
+        .options(undefer(TraiteDocument.content))
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Aucun document pour cette face.")
 
-    content = await storage.read(document.fichier_chemin)
+    try:
+        content = await run_in_threadpool(read_document_content, document)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Document content is unavailable.") from exc
     return Response(
         content=content,
         media_type=document.content_type,
-        headers={"Content-Disposition": f'inline; filename="{document.fichier_nom}"'},
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(document.fichier_nom, safe='')}",
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
