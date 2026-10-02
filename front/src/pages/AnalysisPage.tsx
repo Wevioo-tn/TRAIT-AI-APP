@@ -33,14 +33,10 @@ const CHAMP_LABELS: Record<string, string> = {
   cle_rib: "Clé RIB",
 };
 
-// montant_lettres used to be excluded from the "Contrôle de cohérence des
-// champs dupliqués" table (per an earlier call) — reversed: it's now shown
-// like every other duplicated field. Its own coherence status had ended up
-// with nowhere left to appear at all once the cross-field discrepancies
-// banner stopped showing plain field names (that banner was the only other
-// place it was ever visible, and only by accident, as a misleading raw
-// code). No field is hidden from this table any more.
-const CHAMPS_HIDDEN_FROM_COHERENCE_TABLE = new Set<string>([]);
+// The form contains one "Montant en lettres" zone only. It remains available
+// to the backend's chiffres-vs-lettres cross-check, but displaying a made-up
+// second occurrence here would create a false duplicate-field discrepancy.
+const CHAMPS_HIDDEN_FROM_COHERENCE_TABLE = new Set<string>(["montant_lettres"]);
 
 // The 3 real cross-field écarts compute_inconsistencies produces (RIB
 // direct vs. reconstructed, montant en lettres vs. en chiffres, N° L-CN
@@ -267,11 +263,28 @@ export default function AnalysisPage() {
 }
 
 function SummaryHeader({ traite }: { traite: TraiteDetail }) {
+  const conflictingReadings = (fieldName: string): string[] => {
+    const values = traite.champs_extraits
+      .filter((field) => field.nom_champ === fieldName && field.valeur?.trim())
+      .sort((left, right) => left.occurrence - right.occurrence)
+      .map((field) => field.valeur!.trim());
+    return [...new Set(values)].length > 1 ? values : [];
+  };
+
+  const amountConflicts = conflictingReadings("montant_chiffres");
+  const dueDateConflicts = conflictingReadings("echeance");
+  const amountSummary = amountConflicts.length > 0
+    ? `Écart : ${amountConflicts.join(" / ")}`
+    : formatMontant(traite.montant);
+  const dueDateSummary = dueDateConflicts.length > 0
+    ? `Écart : ${dueDateConflicts.join(" / ")}`
+    : formatDate(traite.date_echeance);
+
   const items: [string, string][] = [
     ["N° L-CN", traite.numero_lcn],
     ["Tireur", traite.tireur_nom ?? "Non résolu"],
-    ["Tiré", traite.tire_nom ?? "Non résolu"],
-    ["Montant · échéance", `${formatMontant(traite.montant)} · ${formatDate(traite.date_echeance)}`],
+    ["Nom du tiré", traite.tire_nom ?? "Non résolu"],
+    ["Montant · échéance", `${amountSummary} · ${dueDateSummary}`],
   ];
   return (
     <div
@@ -811,6 +824,14 @@ function DateRulesCard({ traite }: { traite: TraiteDetail }) {
 }
 
 function NlpCard({ traite }: { traite: TraiteDetail }) {
+  const roleLabels: Record<string, string> = {
+    tireur: "Tireur",
+    tire: "Nom du tiré",
+    adresse_tire: "Adresse du tiré",
+    ordre: "Ordre",
+    rib: "RIB",
+  };
+
   return (
     <div style={card}>
       <div style={cardHeader}>
@@ -823,7 +844,7 @@ function NlpCard({ traite }: { traite: TraiteDetail }) {
         return (
           <div key={n.id} style={{ padding: "11px 14px", borderBottom: `1px solid ${colors.dividerLight}`, display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted, width: 44 }}>{n.role}</span>
+              <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: colors.textMuted, width: 92 }}>{roleLabels[n.role] ?? n.role}</span>
               <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
                 <span style={{ fontSize: 12 }}>
                   <b>{n.valeur_scan || "—"}</b> <span style={{ color: "#8B9AA8" }}>↔</span> {n.valeur_referentiel ?? "aucune correspondance"}

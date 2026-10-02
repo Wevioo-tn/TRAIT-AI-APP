@@ -27,6 +27,7 @@ from app.services.extraction import (
     CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
+    ROLE_ADRESSE_TIRE,
     ROLE_DOMICILIATION,
     ROLE_ORDRE,
     ROLE_TIRE,
@@ -79,8 +80,16 @@ Source mapping:
 - date_creation: occurrence_1 = "Le", occurrence_2 = "Date de cr?ation".
 - rib_tire.occurrence_1: complete value in "RIB ou RIP du Tir?".
 - lieu_creation: occurrence_1 = "A" / "?", occurrence_2 = "Lieu de cr?ation".
-- tireur_texte: text in the Tireur (issuer) block.
-- tire_texte: text in the Tir? (payer) block.
+- tireur_texte: only the name written in the recto field labelled
+  "Nom du cédant". This field is the authoritative source for the Tireur
+  name. Do not read tireur_texte from the separate "Tireur" box, a stamp,
+  a signature, a logo, or any other occurrence of a company name.
+- tire_nom_texte: only the person/company name in the Tir? (payer) block.
+- tire_adresse_texte: only the postal address in that same Tir? block.
+  The name and address can share one handwritten zone: separate them by
+  meaning and never include address lines in tire_nom_texte or the name in
+  tire_adresse_texte. Preserve each part verbatim; use null when absent or
+  unreadable.
 - ordre_texte: beneficiary after "payez ? l'ordre de".
 - domiciliation_texte: text in the Domiciliation block.
 
@@ -236,7 +245,8 @@ class VlmExtractor:
 
         parties = [
             PartyCandidate(ROLE_TIREUR, data["tireur_texte"]),
-            PartyCandidate(ROLE_TIRE, data["tire_texte"]),
+            PartyCandidate(ROLE_TIRE, data["tire_nom_texte"]),
+            PartyCandidate(ROLE_ADRESSE_TIRE, data["tire_adresse_texte"]),
             PartyCandidate(ROLE_ORDRE, data["ordre_texte"]),
             PartyCandidate(ROLE_DOMICILIATION, data["domiciliation_texte"]),
         ]

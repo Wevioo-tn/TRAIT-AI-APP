@@ -128,15 +128,29 @@ def evaluate_date_rules(
     due = traite.date_echeance if fields is None else extracted_date(CHAMP_ECHEANCE)
     today = date.today()
 
-    def rule(label: str, left: date | None, right: date | None, *, reverse: bool = False) -> DateRule:
+    def rule(
+        label: str,
+        left: date | None,
+        right: date | None,
+        *,
+        reverse: bool = False,
+        strict: bool = False,
+    ) -> DateRule:
+        if left is None or right is None:
+            verdict = None
+        elif reverse:
+            verdict = left > right if strict else left >= right
+        else:
+            verdict = left < right if strict else left <= right
+
         return DateRule(
             label, left.isoformat() if left else None, right.isoformat() if right else None,
-            (left >= right if reverse else left <= right) if left and right else None,
+            verdict,
         )
 
     return [
         rule("Date de création ≤ date du jour", creation, today),
-        rule("Date de création ≤ date d'échéance", creation, due),
+        rule("Date de création < date d'échéance", creation, due, strict=True),
         rule("Date du jour ≤ date d'échéance", today, due),
         rule("Date de création ≥ date de la facture rapprochée",
              creation if invoice else None, invoice.date_facture if invoice else None, reverse=True),

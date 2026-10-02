@@ -57,7 +57,10 @@ def test_extractions_ia_columns_and_fk(sync_engine):
 def test_adherents_columns(sync_engine):
     inspector = inspect(sync_engine)
     columns = {c["name"] for c in inspector.get_columns("adherents", schema="imx")}
-    assert columns == {"code_adherent", "raison_sociale", "matricule_fiscal", "statut_contrat"}
+    assert columns == {
+        "code_adherent", "raison_sociale", "matricule_fiscal",
+        "beneficiaire_attendu", "statut_contrat",
+    }
 
 
 def test_debiteurs_columns_and_fk(sync_engine):

@@ -49,11 +49,11 @@ def _make_bill_fully_passing(engine, bill_id: str, code_debiteur: str, *, with_r
     - an ORDRE beneficiary and a conforme SIG_TIREUR verification;
     - RIB-identified (TR-102) TIREUR/TIRE rows with no alerte_ecart_nom.
 
-    The 3 date rules that don't need a matched invoice pass for free:
-    an empty-payload POST /api/traites defaults date_creation_traite =
-    date_echeance = today, so création<=aujourd'hui<=échéance all hold
-    trivially; the 4th rule (avance sur facture) has no invoice to judge
-    and is skipped (ok=None), not a failure.
+    The 3 date rules that don't need a matched invoice pass using the
+    extracted dates below: creation is before today and echeance is after
+    both, including the strict creation < echeance rule. The 4th rule
+    (avance sur facture) has no invoice to judge and is skipped (ok=None),
+    not a failure.
     """
     with Session(engine) as session:
         bill = session.get(Traite, uuid.UUID(bill_id))

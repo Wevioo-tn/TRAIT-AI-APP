@@ -46,6 +46,7 @@ CHAMP_CLE_RIB = "cle_rib"
 
 ROLE_TIREUR = "tireur"
 ROLE_TIRE = "tire"
+ROLE_ADRESSE_TIRE = "adresse_tire"
 ROLE_ORDRE = "ordre"
 # Bank agency name/address (Domiciliation) — free text, a single reading
 # (not a duplicated field like the ones above), same treatment as
@@ -93,11 +94,15 @@ class StubExtractor:
         self,
         tireur_texte: str | None = None,
         tire_texte: str | None = None,
+        tire_adresse_texte: str | None = None,
+        rib_tire: str | None = None,
         ordre_texte: str | None = None,
         domiciliation_texte: str | None = None,
     ) -> None:
         self._tireur_texte = tireur_texte
         self._tire_texte = tire_texte
+        self._tire_adresse_texte = tire_adresse_texte
+        self._rib_tire = rib_tire
         self._ordre_texte = ordre_texte
         self._domiciliation_texte = domiciliation_texte
 
@@ -121,7 +126,7 @@ class StubExtractor:
             *_pair(CHAMP_DATE_CREATION, creation_date_str),
             # Genuinely unknown without real OCR — reported as absent
             # rather than guessed.
-            *_pair(CHAMP_RIB_TIRE, None),
+            *_pair(CHAMP_RIB_TIRE, self._rib_tire),
             *_pair(CHAMP_LIEU_CREATION, None),
             *_pair(CHAMP_CODE_ETABLISSEMENT, None),
             *_pair(CHAMP_CODE_AGENCE, None),
@@ -132,6 +137,7 @@ class StubExtractor:
         parties = [
             PartyCandidate(ROLE_TIREUR, self._tireur_texte),
             PartyCandidate(ROLE_TIRE, self._tire_texte),
+            PartyCandidate(ROLE_ADRESSE_TIRE, self._tire_adresse_texte),
             PartyCandidate(ROLE_ORDRE, self._ordre_texte),
             PartyCandidate(ROLE_DOMICILIATION, self._domiciliation_texte),
         ]

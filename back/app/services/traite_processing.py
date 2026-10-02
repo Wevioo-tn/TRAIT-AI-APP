@@ -41,6 +41,7 @@ from app.services.extraction import (
     CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
+    ROLE_ADRESSE_TIRE,
     ROLE_DOMICILIATION,
     ROLE_ORDRE,
     ROLE_TIRE,
@@ -163,6 +164,41 @@ def _normalize_montant_lettres(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def _single_observed_value(values: list[str | None]) -> str | None:
+    """Return the one distinct non-empty OCR reading, if there is one.
+
+    A printed occurrence may legitimately be empty on a real instrument.
+    Empty zones must not manufacture a second value, while two conflicting
+    non-empty readings must still prevent any automatic choice.
+    """
+    observed = {value.strip() for value in values if value and value.strip()}
+    return next(iter(observed)) if len(observed) == 1 else None
+
+
+def _cross_validated_amount(by_field: dict[str, list[str | None]]) -> Decimal | None:
+    """Resolve a safe canonical amount from the document's independent zones.
+
+    Prefer the historical rule of two identical numeric occurrences.  Real
+    Tunisian bills can, however, contain only one filled numeric amount box;
+    in that case the independently handwritten amount in words is sufficient
+    corroboration when it spells exactly the parsed numeric value.  Never
+    choose between conflicting non-empty readings.
+    """
+    numeric_values = by_field.get(CHAMP_MONTANT_CHIFFRES, [])
+    numeric_text = _coherent(numeric_values)
+    if numeric_text is None:
+        numeric_text = _single_observed_value(numeric_values)
+        words_text = _single_observed_value(by_field.get(CHAMP_MONTANT_LETTRES, []))
+        parsed = _parse_montant(numeric_text) if numeric_text is not None else None
+        if parsed is None or words_text is None:
+            return None
+        expected_words = amount_to_words(parsed)
+        if _normalize_montant_lettres(expected_words) != _normalize_montant_lettres(words_text):
+            return None
+        return parsed
+    return _parse_montant(numeric_text)
+
+
 def _coherent_rib_part(by_field: dict[str, list[str | None]], field_name: str) -> str | None:
     """Same 'two OCR occurrences agree' gate as every other duplicated
     field (see _coherent), but canonicalized (digits only) first — a
@@ -221,7 +257,14 @@ def compute_inconsistencies(by_field: dict[str, list[str | None]]) -> list[str]:
     not on anything champs_extraits alone can reconstruct — out of scope
     for a champs_extraits-only recomputation, and stays inline in
     execute_analysis below."""
-    inconsistencies = sorted(name for name, values in by_field.items() if len(set(values)) > 1)
+    # montant_lettres has one physical source zone. The extraction contract
+    # keeps the generic occurrence_2 slot for compatibility, but its null
+    # value is not a missing duplicate and must never create a false gap.
+    inconsistencies = sorted(
+        name
+        for name, values in by_field.items()
+        if name != CHAMP_MONTANT_LETTRES and len(set(values)) > 1
+    )
 
     rib_direct = _coherent_rib_part(by_field, CHAMP_RIB_TIRE)
     rib_reconstitue = reconstruct_rib(
@@ -233,8 +276,8 @@ def compute_inconsistencies(by_field: dict[str, list[str | None]]) -> list[str]:
     if rib_direct is not None and rib_reconstitue is not None and rib_direct != rib_reconstitue:
         inconsistencies.append(_INCOHERENCE_RIB_RECONSTITUE)
 
-    montant_chiffres_coherent = _coherent(by_field.get(CHAMP_MONTANT_CHIFFRES, []))
-    montant_lettres_coherent = _coherent(by_field.get(CHAMP_MONTANT_LETTRES, []))
+    montant_chiffres_coherent = _single_observed_value(by_field.get(CHAMP_MONTANT_CHIFFRES, []))
+    montant_lettres_coherent = _single_observed_value(by_field.get(CHAMP_MONTANT_LETTRES, []))
     if montant_chiffres_coherent is not None and montant_lettres_coherent is not None:
         montant_parsed = _parse_montant(montant_chiffres_coherent)
         if montant_parsed is not None:
@@ -277,8 +320,7 @@ def _promote_canonical_identity(traite: Traite, by_field: dict[str, list[str | N
                 collision,
             )
 
-    montant_text = _coherent(by_field.get(CHAMP_MONTANT_CHIFFRES, []))
-    montant = _parse_montant(montant_text) if montant_text is not None else None
+    montant = _cross_validated_amount(by_field)
     if montant is not None and 0 < montant < _MAX_MONTANT:
         traite.montant = montant
 
@@ -379,6 +421,7 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
 
     drawer_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIREUR), None)
     drawee_text = next((p.scanned_value for p in result.parties if p.role == ROLE_TIRE), None)
+    drawee_address = next((p.scanned_value for p in result.parties if p.role == ROLE_ADRESSE_TIRE), None)
     payee_text = next((p.scanned_value for p in result.parties if p.role == ROLE_ORDRE), None)
     # A single, unique-occurrence attribute of the bill itself (see
     # Traite.domiciliation's own docstring) — raw text, no validation, no
@@ -391,6 +434,7 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
     adherents = session.scalars(select(Adherent)).all()
     debiteurs = session.scalars(select(Debiteur)).all()
     adherents_by_code = {a.code_adherent: a for a in adherents}
+    debiteurs_by_code = {d.code_debiteur: d for d in debiteurs}
 
     # RIB first (UC-01, étape 4 of the functional spec: "Vérifier RIB 20
     # chiffres = RIB IMX débiteur") — only when both OCR occurrences of the
@@ -471,11 +515,25 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
         # it's a lead for a human to confirm, never an identification.
         drawer_match = best_match(drawer_text, [(a.code_adherent, a.raison_sociale) for a in adherents])
         drawee_match = best_match(drawee_text, [(d.code_debiteur, d.raison_sociale) for d in debiteurs])
-        code_debiteur, code_adherent = drawee_match.code, drawer_match.code
+        # A fuzzy candidate is useful evidence for the reviewer, but it is
+        # not a referential link. Only an exact IMX RIB may populate the
+        # traite foreign keys and unlock debtor invoices/contract data.
+        code_debiteur = code_adherent = None
         drawee_score, drawee_reference = drawee_match.score, drawee_match.reference_value
         drawer_score, drawer_reference = drawer_match.score, drawer_match.reference_value
         drawee_method = drawer_method = MethodeIdentification.NOM_SEUL
         drawee_alert = drawer_alert = False
+
+    # The drawee name and address occupy the same printed box on the LCN,
+    # but are distinct business facts. The VLM separates them before this
+    # point; compare the address only with imx.debiteurs.adresse for the
+    # debtor selected by RIB/name, never with raison_sociale.
+    matched_debtor = debiteurs_by_code.get(code_debiteur) if code_debiteur else None
+    address_reference = matched_debtor.adresse if matched_debtor else None
+    address_match = best_match(
+        drawee_address,
+        [(code_debiteur, address_reference)] if code_debiteur and address_reference else [],
+    )
 
     session.add(
         RapprochementNlp(
@@ -484,9 +542,20 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
             valeur_scan=drawer_text or "",
             valeur_referentiel=drawer_reference,
             score=drawer_score,
-            code_adherent_matche=code_adherent,
+            code_adherent_matche=(code_adherent if drawer_method == MethodeIdentification.RIB else None),
             methode_identification=drawer_method,
             alerte_ecart_nom=drawer_alert,
+        )
+    )
+    session.add(
+        RapprochementNlp(
+            traite_id=traite_id,
+            role=RoleNlp.ADRESSE_TIRE,
+            valeur_scan=drawee_address or "",
+            valeur_referentiel=address_match.reference_value,
+            score=address_match.score,
+            code_debiteur_matche=code_debiteur if address_match.reference_value is not None else None,
+            methode_identification=drawee_method,
         )
     )
     session.add(
@@ -496,7 +565,7 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
             valeur_scan=drawee_text or "",
             valeur_referentiel=drawee_reference,
             score=drawee_score,
-            code_debiteur_matche=code_debiteur,
+            code_debiteur_matche=(code_debiteur if drawee_method == MethodeIdentification.RIB else None),
             methode_identification=drawee_method,
             alerte_ecart_nom=drawee_alert,
         )
@@ -521,22 +590,15 @@ def execute_analysis(traite_id: uuid.UUID, session: Session, extractor: Extracto
         )
     )
 
-    # "Ordre" (bénéficiaire déclaré) — Synthèse d'analyse : Traite, "Payer à
-    # l'ordre de : bénéficiaire = Adhérent → NLP, cohérence avec contrat
-    # IMX". No contracts data model exists in this app, so this compares
-    # against the one already-resolved adhérent's own raison_sociale only
-    # (a single comparison, not a table search — same corroboration
-    # pattern TIREUR/TIRE already use once a débiteur is known by RIB) —
-    # never against "the real contract" the spec describes. Purely
-    # informational: unlike drawee_alert, a low score here never affects
-    # ``clean``/the traite's statut — the spec doesn't say this écart
-    # should block, unlike the RIB/nom check on the tiré (TR-102), so
-    # nothing here invents that.
+    # "Payer à l'ordre de" is a contractual beneficiary check. It must
+    # never use raison_sociale as a proxy: the adherent and beneficiary can
+    # legitimately be different legal entities. Missing contract data
+    # therefore yields an explicit unscored/indeterminate row.
     if code_adherent is not None:
         adherent_for_payee = adherents_by_code.get(code_adherent)
         payee_corrob = (
-            best_match(payee_text, [(code_adherent, adherent_for_payee.raison_sociale)])
-            if adherent_for_payee is not None
+            best_match(payee_text, [(code_adherent, adherent_for_payee.beneficiaire_attendu)])
+            if adherent_for_payee is not None and adherent_for_payee.beneficiaire_attendu
             else best_match(None, [])
         )
         payee_score, payee_reference = payee_corrob.score, payee_corrob.reference_value

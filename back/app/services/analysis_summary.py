@@ -19,11 +19,12 @@ def build_analysis_summary(traite: Traite) -> dict:
             if target != "montant" or (value.is_finite() and 0 < value < _MAX_MONTANT):
                 data[target] = value
 
+    # Queue/detail headers describe the document being reviewed, so the
+    # VLM transcription has priority. IMX names remain visible in the NLP
+    # comparison panel and are only a fallback when the source is unreadable.
     for role, target in (("tireur", "tireur_nom"), ("tire", "tire_nom")):
-        if not data[target]:
-            scanned = next((n.valeur_scan for n in traite.rapprochements_nlp
-                            if n.role.value == role and n.valeur_scan), None)
-            # The source may contain an address; never label it as an IMX identity.
-            if scanned:
-                data[target] = f"Texte OCR : {scanned}"
+        scanned = next((n.valeur_scan for n in traite.rapprochements_nlp
+                        if n.role.value == role and n.valeur_scan), None)
+        if scanned:
+            data[target] = scanned
     return data

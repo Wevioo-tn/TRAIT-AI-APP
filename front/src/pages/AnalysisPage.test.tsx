@@ -164,25 +164,19 @@ describe("AnalysisPage", () => {
     expect(screen.getByText("✓ Cohérent")).toBeInTheDocument();
   });
 
-  it("shows Montant en lettres in the duplicated-fields coherence table like any other field", async () => {
-    // Reversed from an earlier call to hide it here: once the cross-field
-    // discrepancies banner correctly stopped showing plain field names
-    // (that banner used to be the only, accidental place montant_lettres'
-    // own coherence was visible at all), hiding it from this table too
-    // left it with nowhere to appear - found live by the user looking for
-    // exactly this row and not finding it anywhere on the page.
+  it("hides the single Montant en lettres zone from the duplicated-fields table", async () => {
     const traite = baseTraite({
       champs_extraits: [
         { id: "c1", nom_champ: "echeance", occurrence: 1, valeur: "2026-08-28", source: "ocr", confiance: null },
         { id: "c2", nom_champ: "echeance", occurrence: 2, valeur: "2026-08-28", source: "ocr", confiance: null },
         { id: "c3", nom_champ: "montant_lettres", occurrence: 1, valeur: "Huit mille cent dix-sept dinars", source: "ocr", confiance: null },
-        { id: "c4", nom_champ: "montant_lettres", occurrence: 2, valeur: "Huit mille cent dix-sept dinars", source: "ocr", confiance: null },
+        { id: "c4", nom_champ: "montant_lettres", occurrence: 2, valeur: null, source: "ocr", confiance: null },
       ],
     });
     renderAnalysisPage(traite);
     await screen.findByText("Échéance");
-    expect(screen.getByText("Montant en lettres")).toBeInTheDocument();
-    expect(screen.getAllByText("Huit mille cent dix-sept dinars").length).toBe(2);
+    expect(screen.queryByText("Montant en lettres")).not.toBeInTheDocument();
+    expect(screen.queryByText("Huit mille cent dix-sept dinars")).not.toBeInTheDocument();
   });
 
   it("flags Montant en lettres as an écart when its own two occurrences disagree", async () => {
@@ -443,6 +437,50 @@ describe("AnalysisPage", () => {
 
     expect(screen.getByText("Identifié par RIB")).toBeInTheDocument();
     expect(screen.getByText("Nom seul — à confirmer")).toBeInTheDocument();
+  });
+
+  it("shows the drawee name and address as separate IMX comparisons", async () => {
+    const traite = baseTraite({
+      rapprochements_nlp: [
+        {
+          id: "n1", role: "tire", valeur_scan: "LA MÉDITERRANÉENNE",
+          valeur_referentiel: "LA MÉDITERRANÉENNE", score: "100.00",
+          code_adherent_matche: null, code_debiteur_matche: "DEB-0087",
+          methode_identification: "rib", alerte_ecart_nom: false,
+        },
+        {
+          id: "n2", role: "adresse_tire",
+          valeur_scan: "Lot 31, ZI, Chotrana II, 2036 Ariana",
+          valeur_referentiel: "Lot 31, Z.I. Chotrana II, 2036 Ariana", score: "98.00",
+          code_adherent_matche: null, code_debiteur_matche: "DEB-0087",
+          methode_identification: "rib", alerte_ecart_nom: false,
+        },
+      ],
+    });
+    renderAnalysisPage(traite);
+    await screen.findByText("011570763437");
+
+    expect(screen.getAllByText("Nom du tiré").length).toBeGreaterThan(0);
+    expect(screen.getByText("Adresse du tiré")).toBeInTheDocument();
+    expect(screen.getByText("Lot 31, ZI, Chotrana II, 2036 Ariana")).toBeInTheDocument();
+    expect(screen.getByText("Lot 31, Z.I. Chotrana II, 2036 Ariana")).toBeInTheDocument();
+  });
+
+  it("shows conflicting extracted amount and due dates instead of intake placeholders", async () => {
+    const traite = baseTraite({
+      montant: "0.001",
+      date_echeance: "2026-10-02",
+      champs_extraits: [
+        { id: "m1", nom_champ: "montant_chiffres", occurrence: 1, valeur: "42 210 000", source: "ocr", confiance: null },
+        { id: "m2", nom_champ: "montant_chiffres", occurrence: 2, valeur: "42 520 000", source: "ocr", confiance: null },
+        { id: "e1", nom_champ: "echeance", occurrence: 1, valeur: "30/09/25", source: "ocr", confiance: null },
+        { id: "e2", nom_champ: "echeance", occurrence: 2, valeur: "31/09/25", source: "ocr", confiance: null },
+      ],
+    });
+    renderAnalysisPage(traite);
+
+    expect(await screen.findByText("Écart : 42 210 000 / 42 520 000 · Écart : 30/09/25 / 31/09/25")).toBeInTheDocument();
+    expect(screen.queryByText(/0,001 DT · 02\/10\/2026/)).not.toBeInTheDocument();
   });
 
   it("shows a dedicated RIB row without a redundant méthode badge under itself", async () => {

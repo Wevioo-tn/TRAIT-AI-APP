@@ -138,7 +138,12 @@ async def test_traite_detail_keeps_imx_facture_context_distinct_from_cashier_sai
                 Adherent(code_adherent=CODE_ADHERENT, raison_sociale="ADACTIM", statut_contrat=StatutContrat.ACTIF)
             )
             session.add(
-                Debiteur(code_debiteur=CODE_DEBITEUR, raison_sociale="LA MÉDITERRANÉENNE", rib="11003000291700178836")
+                Debiteur(
+                    code_debiteur=CODE_DEBITEUR,
+                    raison_sociale="LA MÉDITERRANÉENNE",
+                    rib="11003000291700178836",
+                    code_adherent=CODE_ADHERENT,
+                )
             )
             session.add(
                 Facture(
@@ -157,7 +162,11 @@ async def test_traite_detail_keeps_imx_facture_context_distinct_from_cashier_sai
             execute_analysis(
                 uuid.UUID(traite_id),
                 session,
-                StubExtractor(tireur_texte="ADACTIM", tire_texte="LA MÉDITERRANÉENNE"),
+                    StubExtractor(
+                        tireur_texte="ADACTIM",
+                        tire_texte="LA MÉDITERRANÉENNE",
+                        rib_tire="11003000291700178836",
+                    ),
             )
             session.commit()
 

@@ -34,6 +34,7 @@ from app.services.extraction import (
     CHAMP_NUMERO_COMPTE,
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
+    ROLE_ADRESSE_TIRE,
     ROLE_ORDRE,
     ROLE_TIRE,
     ROLE_TIREUR,
@@ -110,11 +111,17 @@ RIB_DEB_1001 = "11003000291700178836"
 
 
 def _seed_referential(session) -> None:
-    session.add(Adherent(code_adherent="ADH-1001", raison_sociale="ADACTIM", statut_contrat=StatutContrat.ACTIF))
+    session.add(Adherent(
+        code_adherent="ADH-1001",
+        raison_sociale="ADACTIM",
+        beneficiaire_attendu="SPG",
+        statut_contrat=StatutContrat.ACTIF,
+    ))
     session.add(
         Debiteur(
             code_debiteur="DEB-1001",
             raison_sociale="LA MÉDITERRANÉENNE",
+            adresse="Lot 31, Z.I. Chotrana II, 2036 Ariana",
             rib=RIB_DEB_1001,
             code_adherent="ADH-1001",  # matches real seed.py — needed for RIB-first tests to resolve the adhérent
         )
@@ -149,11 +156,8 @@ def test_name_only_match_never_yields_controle_manuel_requis_even_at_100_score(d
     result = execute_analysis(traite.id, db_session, extractor)
 
     assert result.statut == TraiteStatut.ECARTS_A_TRAITER
-    assert result.code_adherent == "ADH-1001"
-    assert result.code_debiteur == "DEB-1001"
-    # The display-name properties the queue list depends on.
-    assert result.tireur_nom == "ADACTIM"
-    assert result.tire_nom == "LA MÉDITERRANÉENNE"
+    assert result.code_adherent is None
+    assert result.code_debiteur is None
 
     fields = db_session.scalars(select(ChampExtrait).where(ChampExtrait.traite_id == traite.id)).all()
     assert len(fields) == 22  # 11 fields x 2 occurrences (7 original + 4 RIB sub-fields, TR-122)
@@ -161,10 +165,13 @@ def test_name_only_match_never_yields_controle_manuel_requis_even_at_100_score(d
     nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
     by_role = {n.role: n for n in nlp}
     assert by_role[RoleNlp.TIREUR].score == 100.0
+    assert by_role[RoleNlp.TIREUR].code_adherent_matche is None
     assert by_role[RoleNlp.TIREUR].methode_identification == MethodeIdentification.NOM_SEUL
     assert by_role[RoleNlp.TIRE].score >= 95.0
+    assert by_role[RoleNlp.TIRE].code_debiteur_matche is None
     assert by_role[RoleNlp.TIRE].methode_identification == MethodeIdentification.NOM_SEUL
     assert RoleNlp.ORDRE in by_role
+    assert RoleNlp.ADRESSE_TIRE in by_role
 
 
 class TestRibFirstIdentification:
@@ -185,6 +192,7 @@ class TestRibFirstIdentification:
             parties=[
                 PartyCandidate(ROLE_TIREUR, "ADACTIM"),
                 PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
+                PartyCandidate(ROLE_ADRESSE_TIRE, "Lot 31, Z.I. Chotrana II, 2036 Ariana"),
             ],
         )
         result = execute_analysis(traite.id, db_session, extractor)
@@ -198,6 +206,9 @@ class TestRibFirstIdentification:
         assert by_role[RoleNlp.TIRE].methode_identification == MethodeIdentification.RIB
         assert by_role[RoleNlp.TIRE].alerte_ecart_nom is False
         assert by_role[RoleNlp.TIREUR].methode_identification == MethodeIdentification.RIB
+        assert by_role[RoleNlp.ADRESSE_TIRE].valeur_scan == "Lot 31, Z.I. Chotrana II, 2036 Ariana"
+        assert by_role[RoleNlp.ADRESSE_TIRE].valeur_referentiel == "Lot 31, Z.I. Chotrana II, 2036 Ariana"
+        assert by_role[RoleNlp.ADRESSE_TIRE].score == 100.0
 
     def test_incoherent_rib_occurrences_falls_back_to_name_only_and_never_auto_confirms(self, db_session, tmp_path):
         traite = _make_traite_with_documents(db_session, tmp_path)
@@ -302,12 +313,7 @@ class TestRibFirstIdentification:
 
 
 class TestRibRowAndOrdreCorroboration:
-    """TR-115: an explicit RIB row in rapprochements_nlp (UC-01, étape 4),
-    and a real (if scoped-down) check on "Payer à l'ordre de" against the
-    resolved adhérent (Synthèse d'analyse : Traite, "cohérence avec
-    contrat IMX" — no contracts model exists here, so this compares
-    against the adhérent's own raison_sociale only, documented as a
-    deliberate scope limit, not the full spec claim)."""
+    """RIB visibility and contractual beneficiary reconciliation."""
 
     def _rib_pair(self, rib: str) -> list[FieldCandidate]:
         return [FieldCandidate(CHAMP_RIB_TIRE, 1, rib), FieldCandidate(CHAMP_RIB_TIRE, 2, rib)]
@@ -344,7 +350,7 @@ class TestRibRowAndOrdreCorroboration:
         assert rib_row.code_debiteur_matche is None
         assert result.statut == TraiteStatut.ECARTS_A_TRAITER
 
-    def test_ordre_scored_against_resolved_adherent_once_debiteur_known(self, db_session, tmp_path):
+    def test_ordre_scored_against_expected_contract_beneficiary(self, db_session, tmp_path):
         traite = _make_traite_with_documents(db_session, tmp_path)
         _seed_referential(db_session)
 
@@ -353,14 +359,14 @@ class TestRibRowAndOrdreCorroboration:
             parties=[
                 PartyCandidate(ROLE_TIREUR, "ADACTIM"),
                 PartyCandidate(ROLE_TIRE, "LA MÉDITERRANÉENNE"),
-                PartyCandidate(ROLE_ORDRE, "ADACTIM"),  # matches the resolved adhérent exactly
+                PartyCandidate(ROLE_ORDRE, "SPG"),
             ],
         )
         execute_analysis(traite.id, db_session, extractor)
 
         nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
         ordre_row = next(n for n in nlp if n.role == RoleNlp.ORDRE)
-        assert ordre_row.valeur_referentiel == "ADACTIM"
+        assert ordre_row.valeur_referentiel == "SPG"
         assert ordre_row.score == 100.0
         assert ordre_row.code_adherent_matche == "ADH-1001"
 
@@ -391,11 +397,31 @@ class TestRibRowAndOrdreCorroboration:
         traite = _make_traite_with_documents(db_session, tmp_path)
         _seed_referential(db_session)
 
-        extractor = _FakeExtractor(fields=[], parties=[PartyCandidate(ROLE_ORDRE, "ADACTIM")])
+        extractor = _FakeExtractor(fields=[], parties=[PartyCandidate(ROLE_ORDRE, "SPG")])
         execute_analysis(traite.id, db_session, extractor)
 
         nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
         ordre_row = next(n for n in nlp if n.role == RoleNlp.ORDRE)
+        assert ordre_row.valeur_referentiel is None
+        assert ordre_row.score == 0.0
+
+    def test_ordre_is_indeterminate_without_contract_beneficiary(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path)
+        _seed_referential(db_session)
+        db_session.get(Adherent, "ADH-1001").beneficiaire_attendu = None
+        db_session.flush()
+
+        extractor = _FakeExtractor(
+            fields=self._rib_pair(RIB_DEB_1001),
+            parties=[PartyCandidate(ROLE_ORDRE, "SPG")],
+        )
+        execute_analysis(traite.id, db_session, extractor)
+
+        rows = db_session.scalars(
+            select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)
+        ).all()
+        ordre_row = next(row for row in rows if row.role == RoleNlp.ORDRE)
+        assert ordre_row.valeur_scan == "SPG"
         assert ordre_row.valeur_referentiel is None
         assert ordre_row.score == 0.0
 
@@ -557,14 +583,16 @@ def test_low_confidence_match_yields_ecarts_a_traiter_but_still_records_the_best
     result = execute_analysis(traite.id, db_session, extractor)
 
     assert result.statut == TraiteStatut.ECARTS_A_TRAITER
-    assert result.code_debiteur == "DEB-1001"  # the good match
+    assert result.code_debiteur is None
 
     nlp = db_session.scalars(select(RapprochementNlp).where(RapprochementNlp.traite_id == traite.id)).all()
     tireur_match = next(n for n in nlp if n.role == RoleNlp.TIREUR)
     assert tireur_match.score < 95.0
     # There's only one adherent seeded, so it's still the "best" (only)
     # candidate — recorded, just not good enough to auto-confirm.
-    assert result.code_adherent == "ADH-1001"
+    assert tireur_match.valeur_referentiel == "ADACTIM"
+    assert tireur_match.code_adherent_matche is None
+    assert result.code_adherent is None
 
 
 def test_extraction_failure_marks_ecarts_a_traiter_with_audit_reason(db_session, tmp_path):
@@ -643,6 +671,45 @@ class TestCanonicalIdentityPromotion:
         traite = _make_traite_with_documents(db_session, tmp_path, numero_lcn="000000000004")
         original_montant = traite.montant
         extractor = _FakeExtractor([*_pair(CHAMP_MONTANT_CHIFFRES, "illisible")])
+
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert result.montant == original_montant
+
+    def test_single_numeric_amount_confirmed_by_words_is_promoted(self, db_session, tmp_path):
+        """The real WEVIOO_MODEL_1 scan fills one numeric amount box and
+        leaves the second printed box empty.  Its amount in words is the
+        independent confirmation, so the 0.001 placeholder must not leak to
+        the queue after a successful reading."""
+        traite = _make_traite_with_documents(db_session, tmp_path, numero_lcn="000000000008")
+        extractor = _FakeExtractor(
+            [
+                FieldCandidate(CHAMP_MONTANT_CHIFFRES, 1, "#8117,504#"),
+                FieldCandidate(CHAMP_MONTANT_CHIFFRES, 2, None),
+                FieldCandidate(
+                    CHAMP_MONTANT_LETTRES,
+                    1,
+                    "Huit mille cent dix-sept dinars, 504 millimes",
+                ),
+                FieldCandidate(CHAMP_MONTANT_LETTRES, 2, None),
+            ]
+        )
+
+        result = execute_analysis(traite.id, db_session, extractor)
+
+        assert result.montant == Decimal("8117.504")
+
+    def test_single_numeric_amount_not_confirmed_by_words_keeps_placeholder(self, db_session, tmp_path):
+        traite = _make_traite_with_documents(db_session, tmp_path, numero_lcn="000000000009")
+        original_montant = traite.montant
+        extractor = _FakeExtractor(
+            [
+                FieldCandidate(CHAMP_MONTANT_CHIFFRES, 1, "#8117,504#"),
+                FieldCandidate(CHAMP_MONTANT_CHIFFRES, 2, None),
+                FieldCandidate(CHAMP_MONTANT_LETTRES, 1, "Neuf mille dinars"),
+                FieldCandidate(CHAMP_MONTANT_LETTRES, 2, None),
+            ]
+        )
 
         result = execute_analysis(traite.id, db_session, extractor)
 
@@ -822,10 +889,12 @@ class TestMontantLettresVsChiffres:
         assert result.statut == TraiteStatut.ECARTS_A_TRAITER
         assert result.cross_field_discrepancies == ["montant_lettres_vs_chiffres"]
 
-    def test_internally_incoherent_montant_lettres_skips_cross_check(self, db_session, tmp_path):
-        """One side already disagreeing with itself (its own 2 occurrences)
-        is its own écart — no cross-check attempted on top, no false
-        positive stacked onto an already-flagged field."""
+    def test_multiple_montant_lettres_candidates_skip_cross_check_without_false_duplicate_gap(
+        self, db_session, tmp_path
+    ):
+        """Montant en lettres has one physical zone. Conflicting model
+        candidates cannot support the cross-check, but must not be reported
+        as a duplicated-field gap either."""
         traite = _make_traite_with_documents(db_session, tmp_path)
         _seed_referential(db_session)
 
@@ -840,7 +909,7 @@ class TestMontantLettresVsChiffres:
 
         incoherences = self._incoherences_from_audit(db_session, traite.id)
         assert "montant_lettres_vs_chiffres" not in incoherences
-        assert CHAMP_MONTANT_LETTRES in incoherences  # the field's own occurrence mismatch is still flagged
+        assert CHAMP_MONTANT_LETTRES not in incoherences
 
     def test_stub_extractor_real_fixture_has_no_montant_cross_check_regression(self, db_session, tmp_path):
         """StubExtractor always derives montant_lettres from the traite's

@@ -146,7 +146,14 @@ class TestEvaluateDateRules:
         today = date.today()
         traite = _traite(date_creation_traite=today, date_echeance=today - timedelta(days=30))
         rules = evaluate_date_rules(traite, invoice=None)
-        rule = next(r for r in rules if r.label == "Date de création ≤ date d'échéance")
+        rule = next(r for r in rules if r.label == "Date de création < date d'échéance")
+        assert rule.ok is False
+
+    def test_echeance_equal_to_creation_is_flagged(self):
+        same_day = date.today()
+        traite = _traite(date_creation_traite=same_day, date_echeance=same_day)
+        rules = evaluate_date_rules(traite, invoice=None)
+        rule = next(r for r in rules if r.label == "Date de création < date d'échéance")
         assert rule.ok is False
 
 

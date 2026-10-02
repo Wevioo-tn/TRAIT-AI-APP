@@ -27,16 +27,22 @@ def test_seed_creates_expected_row_counts(db_session):
 def test_real_sample_facture_montant_net_computed_by_db(db_session):
     seed.run(db_session)
 
-    adherent = db_session.get(Adherent, "ADH-1001")
+    adherent = db_session.get(Adherent, "ADH-0142")
     assert adherent.raison_sociale == "ADACTIM"
+    assert adherent.matricule_fiscal == "1330392/A/A/M/000"
+    assert adherent.beneficiaire_attendu == "SPG"
 
-    debiteur = db_session.get(Debiteur, "DEB-1001")
+    debiteur = db_session.get(Debiteur, "DEB-0087")
+    assert debiteur.raison_sociale == "LA MEDITERRANEENNE"
+    assert debiteur.adresse == "Lot 31, Z.I. Chotrana II, 2036 Ariana"
     assert debiteur.rib == "11003000291700178836"
-    assert debiteur.code_adherent == "ADH-1001"
+    assert debiteur.code_adherent == "ADH-0142"
 
     facture = db_session.get(Facture, "FA-26-0301")
     assert facture.montant_ttc == Decimal("8400.000")
     assert facture.montant_avoirs == Decimal("282.496")
+    assert facture.code_adherent == "ADH-0142"
+    assert facture.code_debiteur == "DEB-0087"
     # Computed by Postgres itself (GENERATED ALWAYS AS ttc - avoirs), not by
     # the application — this is the traite's own real montant (8117,504 DT,
     # both handwritten en lettres and boxed en chiffres on the sample).

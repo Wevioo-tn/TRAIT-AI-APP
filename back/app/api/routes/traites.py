@@ -182,14 +182,24 @@ async def list_traites(
     total = await session.scalar(select(func.count()).select_from(base.subquery()))
 
     stmt = (
-        base.options(selectinload(Traite.adherent), selectinload(Traite.debiteur))
+        base.options(
+            selectinload(Traite.adherent),
+            selectinload(Traite.debiteur),
+            selectinload(Traite.champs_extraits),
+            selectinload(Traite.rapprochements_nlp),
+        )
         .order_by(Traite.date_reception.asc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
     items = (await session.execute(stmt)).scalars().all()
 
-    return TraitePage(items=items, total=total or 0, page=page, per_page=per_page)
+    # Keep the queue consistent with the analysis detail for historical
+    # rows created before canonical OCR promotion was fixed.  The summary
+    # only overlays a uniquely parseable reading and falls back to the
+    # stored business value when OCR readings conflict.
+    summaries = [TraiteRead(**build_analysis_summary(traite)) for traite in items]
+    return TraitePage(items=summaries, total=total or 0, page=page, per_page=per_page)
 
 
 @router.get("/counts", response_model=TraiteCountsRead)

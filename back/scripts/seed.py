@@ -8,14 +8,10 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.models.imx import Adherent, Debiteur, Facture, StatutContrat, StatutFacture
 
-# (code, raison_sociale, matricule_fiscal, statut)
-# Transcribed from the tireur stamp: "ADACTIM", "MF 1330392 A/AM 000",
-# "2036 Sokra", tel 31 340000 / fax 71 721163 (address not stored — Adherent
-# has no address column). The last MF digit before "92" reads as either 8
-# or 9 in the handwriting/stamp — kept as documented, but worth eyeballing
-# the original once more if a later mismatch traces back here.
-ADHERENTS: list[tuple[str, str, str | None, StatutContrat]] = [
-    ("ADH-1001", "ADACTIM", "1330392/A/A/M/000", StatutContrat.ACTIF),
+# (code, raison_sociale, matricule_fiscal, beneficiaire_attendu, statut)
+# Dynamic non-official IMX test record supplied with the filled traite.
+ADHERENTS: list[tuple[str, str, str | None, str | None, StatutContrat]] = [
+    ("ADH-0142", "ADACTIM", "1330392/A/A/M/000", "SPG", StatutContrat.ACTIF),
 ]
 
 # (code, raison_sociale, adresse, rib, code_adherent)
@@ -24,17 +20,9 @@ ADHERENTS: list[tuple[str, str, str | None, StatutContrat]] = [
 # clé 36 -> 11003000291700178836), the one field on this document that's
 # printed in individual boxes rather than free-hand cursive.
 #
-# raison_sociale/adresse are NOT directly legible from the handwriting in
-# the "Nom et adresse du Tiré" box (it reads as an address only — lot
-# number, "Z.I.", a locality, "Ariana" — no company-name line I could
-# confidently separate out). "LA MÉDITERRANÉENNE" / "Lot 31, Z.I. Chotrana
-# II, 2036 Ariana" is inferred from this exact RIB having already been
-# used for that identity earlier in this project's fixtures, not read
-# fresh off this photo — please confirm or correct both before relying on
-# this as ground truth.
 DEBITEURS: list[tuple[str, str, str | None, str, str | None]] = [
-    ("DEB-1001", "LA MÉDITERRANÉENNE", "Lot 31, Z.I. Chotrana II, 2036 Ariana",
-     "11003000291700178836", "ADH-1001"),
+    ("DEB-0087", "LA MEDITERRANEENNE", "Lot 31, Z.I. Chotrana II, 2036 Ariana",
+     "11003000291700178836", "ADH-0142"),
 ]
 
 # One reconstructed facture, added per your explicit go-ahead. Unlike the
@@ -45,21 +33,23 @@ DEBITEURS: list[tuple[str, str, str | None, str, str | None]] = [
 # chiffres). date_facture is set before the traite's date de création
 # (2026-08-05) so "Date de création >= date de la facture rapprochée"
 # evaluates true instead of staying not-applicable. num_facture is an
-# arbitrary but plausibly-formatted placeholder.
+# supplied test identifier. The source gives statut "-", which is not a
+# valid value of the non-null IMX enum; ENCOURS is the neutral active state.
 FACTURES: list[tuple[str, str, str, Decimal, Decimal, date, StatutFacture]] = [
-    ("FA-26-0301", "ADH-1001", "DEB-1001", Decimal("8400.000"), Decimal("282.496"),
+    ("FA-26-0301", "ADH-0142", "DEB-0087", Decimal("8400.000"), Decimal("282.496"),
      date(2026, 7, 28), StatutFacture.ENCOURS),
 ]
 
 
 def run(session: Session) -> None:
     """Idempotent: safe to run against a database that's already seeded."""
-    for code, raison_sociale, matricule, statut in ADHERENTS:
+    for code, raison_sociale, matricule, beneficiaire, statut in ADHERENTS:
         session.merge(
             Adherent(
                 code_adherent=code,
                 raison_sociale=raison_sociale,
                 matricule_fiscal=matricule,
+                beneficiaire_attendu=beneficiaire,
                 statut_contrat=statut,
             )
         )

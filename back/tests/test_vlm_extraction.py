@@ -28,7 +28,10 @@ PAIRED_FIELDS = (
 )
 MARK_FIELDS = ("has_signature_tire", "has_cachet_tire", "has_signature_tireur",
                "has_cachet_tireur", "has_acceptation_signature", "has_acceptation_cachet")
-PARTY_FIELDS = ("tireur_texte", "tire_texte", "ordre_texte", "domiciliation_texte")
+PARTY_FIELDS = (
+    "tireur_texte", "tire_nom_texte", "tire_adresse_texte",
+    "ordre_texte", "domiciliation_texte",
+)
 
 
 def _document():
@@ -85,22 +88,32 @@ def test_extract_preserves_backend_contract_and_source_text(extraction_log):
     data["numero_lcn"] = {"occurrence_1": "00123", "occurrence_2": "00456"}
     data["echeance"] = {"occurrence_1": "15/09/26", "occurrence_2": None}
     data["montant_lettres"]["occurrence_1"] = "Deux mille\ndinars"
-    for name, value in zip(PARTY_FIELDS, ("?metteur", "Payeur", "Ordre", "Agence\nTunis")):
+    for name, value in zip(
+        PARTY_FIELDS,
+        ("?metteur", "Payeur", "Lot 31, Z.I. Chotrana II, 2036 Ariana", "Ordre", "Agence\nTunis"),
+    ):
         data[name] = value
     client = _FakeClient(json.dumps(data))
     result = VlmExtractor(client, "test-model").extract(_traite_with_documents(), _image(), _image())
     assert len(result.fields) == 22
-    assert len(result.parties) == 4
+    assert len(result.parties) == 5
     for field in result.fields:
         assert field.value == data[field.field_name][f"occurrence_{field.occurrence}"]
     assert {p.role: p.scanned_value for p in result.parties} == {
-        "tireur": "?metteur", "tire": "Payeur", "ordre": "Ordre", "domiciliation": "Agence\nTunis",
+        "tireur": "?metteur",
+        "tire": "Payeur",
+        "adresse_tire": "Lot 31, Z.I. Chotrana II, 2036 Ariana",
+        "ordre": "Ordre",
+        "domiciliation": "Agence\nTunis",
     }
     request = client.last_kwargs
     assert request["model"] == "test-model"
     assert request["max_completion_tokens"] == 8192
     assert "temperature" not in request
     assert [m["role"] for m in request["messages"]] == ["system", "user"]
+    system_prompt = request["messages"][0]["content"]
+    assert 'recto field labelled\n  "Nom du cédant"' in system_prompt
+    assert "Do not read tireur_texte from the separate \"Tireur\" box" in system_prompt
     images = request["messages"][1]["content"][1:]
     assert len(images) == 2
     assert all(p["image_url"]["detail"] == "high" for p in images)
@@ -155,7 +168,7 @@ def test_rib_reconstruction_preserves_zeroes_and_independent_component_occurrenc
 @pytest.mark.parametrize("change", [
     lambda d: d.pop("domiciliation_texte"),
     lambda d: d.update(extra="unexpected"),
-    lambda d: d.update(tire_texte=123),
+    lambda d: d.update(tire_nom_texte=123),
     lambda d: d.update(numero_lcn="123"),
     lambda d: d["numero_lcn"].update(occurrence_1=123),
     lambda d: d["numero_lcn"].pop("occurrence_2"),

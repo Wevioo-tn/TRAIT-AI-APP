@@ -38,7 +38,8 @@ class VisionDocument(BaseModel):
     numero_compte: Occurrences
     cle_rib: Occurrences
     tireur_texte: str | None
-    tire_texte: str | None
+    tire_nom_texte: str | None
+    tire_adresse_texte: str | None
     ordre_texte: str | None
     domiciliation_texte: str | None
 

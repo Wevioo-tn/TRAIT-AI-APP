@@ -40,6 +40,9 @@ class Adherent(Base):
     code_adherent: Mapped[str] = mapped_column(String(20), primary_key=True)
     raison_sociale: Mapped[str] = mapped_column(String(255), nullable=False)
     matricule_fiscal: Mapped[str | None] = mapped_column(String(50))
+    # Contractual beneficiary expected in "Payer à l'ordre de". Nullable
+    # because the provisional IMX extracts may omit contract details.
+    beneficiaire_attendu: Mapped[str | None] = mapped_column(String(255))
     statut_contrat: Mapped[StatutContrat] = mapped_column(
         SAEnum(StatutContrat, name="statut_contrat", schema=IMX_SCHEMA),
         nullable=False,

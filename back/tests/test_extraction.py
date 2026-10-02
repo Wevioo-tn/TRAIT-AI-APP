@@ -21,6 +21,7 @@ from app.services.extraction import (
     CHAMP_NUMERO_LCN,
     CHAMP_RIB_TIRE,
     ROLE_DOMICILIATION,
+    ROLE_ADRESSE_TIRE,
     ROLE_ORDRE,
     ROLE_TIRE,
     ROLE_TIREUR,
@@ -75,13 +76,20 @@ def test_rib_subfields_are_reported_as_absent():
 def test_party_text_defaults_to_none_without_explicit_configuration():
     result = StubExtractor().extract(_traite(), b"recto", b"verso")
     by_role = {p.role: p.scanned_value for p in result.parties}
-    assert by_role == {ROLE_TIREUR: None, ROLE_TIRE: None, ROLE_ORDRE: None, ROLE_DOMICILIATION: None}
+    assert by_role == {
+        ROLE_TIREUR: None,
+        ROLE_TIRE: None,
+        ROLE_ADRESSE_TIRE: None,
+        ROLE_ORDRE: None,
+        ROLE_DOMICILIATION: None,
+    }
 
 
 def test_party_text_can_be_configured_for_testing_realistic_scenarios():
     extractor = StubExtractor(
         tireur_texte="ADACTIM",
         tire_texte="LA MEDITERRANEENNE",
+        tire_adresse_texte="Lot 31, Z.I. Chotrana II, 2036 Ariana",
         ordre_texte="SPG",
         domiciliation_texte="Agence Centrale, 2036 Ariana",
     )
@@ -90,6 +98,7 @@ def test_party_text_can_be_configured_for_testing_realistic_scenarios():
     assert by_role == {
         ROLE_TIREUR: "ADACTIM",
         ROLE_TIRE: "LA MEDITERRANEENNE",
+        ROLE_ADRESSE_TIRE: "Lot 31, Z.I. Chotrana II, 2036 Ariana",
         ROLE_ORDRE: "SPG",
         ROLE_DOMICILIATION: "Agence Centrale, 2036 Ariana",
     }

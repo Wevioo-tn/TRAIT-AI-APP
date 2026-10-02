@@ -27,7 +27,8 @@ Manifest format (JSON, list of samples):
       "rib_tire": "11003000291700178836",
       "lieu_creation": "TUNIS",
       "tireur_texte": "ADACTIM",
-      "tire_texte": "LA MEDITERRANEENNE",
+      "tire_nom_texte": "LA MEDITERRANEENNE",
+      "tire_adresse_texte": "Lot 31, Z.I. Chotrana II, 2036 Ariana",
       "ordre_texte": "..."
     }
   }

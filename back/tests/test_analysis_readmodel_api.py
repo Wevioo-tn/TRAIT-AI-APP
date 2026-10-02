@@ -75,7 +75,12 @@ async def test_traite_detail_exposes_mentions_and_matched_facture(client, tmp_pa
                 Adherent(code_adherent=CODE_ADHERENT, raison_sociale="ADACTIM", statut_contrat=StatutContrat.ACTIF)
             )
             session.add(
-                Debiteur(code_debiteur=CODE_DEBITEUR, raison_sociale="LA MÉDITERRANÉENNE", rib="11003000291700178836")
+                Debiteur(
+                    code_debiteur=CODE_DEBITEUR,
+                    raison_sociale="LA MÉDITERRANÉENNE",
+                    rib="11003000291700178836",
+                    code_adherent=CODE_ADHERENT,
+                )
             )
             session.add(
                 Facture(
@@ -95,8 +100,11 @@ async def test_traite_detail_exposes_mentions_and_matched_facture(client, tmp_pa
                 uuid.UUID(traite_id),
                 session,
                 StubExtractor(
-                    tireur_texte="ADACTIM",
-                    tire_texte="LA MÉDITERRANÉENNE",
+                    # Deliberately different from both IMX names: the
+                    # header must describe this scan, not the matched row.
+                    tireur_texte="MARWEN BEN AHMED",
+                    tire_texte="KAMEL JANDOUBI",
+                        rib_tire="11003000291700178836",
                     domiciliation_texte="UBCI Agence Paris, Tunis",
                 ),
             )
@@ -110,10 +118,12 @@ async def test_traite_detail_exposes_mentions_and_matched_facture(client, tmp_pa
         # invisible to a reviewer — exposed here for the first time.
         assert body["domiciliation"] == "UBCI Agence Paris, Tunis"
         assert body["cross_field_discrepancies"] == []  # StubExtractor's fields are all internally coherent
+        assert body["tireur_nom"] == "MARWEN BEN AHMED"
+        assert body["tire_nom"] == "KAMEL JANDOUBI"
 
         mentions_by_code = {m["code"]: m for m in body["mentions"]}
         assert mentions_by_code["nom_tire"]["statut"] == "ok"
-        assert mentions_by_code["nom_tire"]["valeur"] == "LA MÉDITERRANÉENNE"
+        assert mentions_by_code["nom_tire"]["valeur"] == "KAMEL JANDOUBI"
         assert mentions_by_code["echeance"]["statut"] == "ok"
 
         regles_by_label = {r["label"]: r for r in body["regles_dates"]}
@@ -190,8 +200,11 @@ async def test_summary_uses_single_reading_without_promoting_business_amount(cli
         result = (await client.get(f"/api/traites/{bill_id}")).json()
         assert Decimal(result["montant"]) == Decimal("8117.504")
         assert result["date_echeance"] == "2026-08-28"
-        assert result["tire_nom"] == "Texte OCR : Lot 31, ZI, Chotrana II"
+        assert result["tire_nom"] == "Lot 31, ZI, Chotrana II"
         assert result["tireur_nom"] is None
+        queue = (await client.get("/api/traites", params={"per_page": 100})).json()
+        queue_row = next(item for item in queue["items"] if item["id"] == bill_id)
+        assert Decimal(queue_row["montant"]) == Decimal("8117.504")
         with Session(engine) as session:
             bill = session.get(Traite, uuid.UUID(bill_id))
             assert bill.montant == Decimal("0.001")
@@ -200,5 +213,8 @@ async def test_summary_uses_single_reading_without_promoting_business_amount(cli
             session.commit()
         conflict = (await client.get(f"/api/traites/{bill_id}")).json()
         assert Decimal(conflict["montant"]) == Decimal("0.001")
+        queue = (await client.get("/api/traites", params={"per_page": 100})).json()
+        queue_row = next(item for item in queue["items"] if item["id"] == bill_id)
+        assert Decimal(queue_row["montant"]) == Decimal("0.001")
     finally:
         engine.dispose()
