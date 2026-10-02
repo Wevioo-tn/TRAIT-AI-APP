@@ -69,3 +69,22 @@ def test_seed_is_idempotent(db_session):
     seed.run(db_session)  # must not raise (duplicate key, etc.)
 
     assert len(db_session.scalars(select(Adherent)).all()) == len(seed.ADHERENTS)
+
+
+def test_reset_imx_replaces_old_rows_with_exact_seed(db_session):
+    db_session.add(
+        Adherent(
+            code_adherent="ADH-OLD",
+            raison_sociale="ANCIENNE DONNEE",
+            statut_contrat=seed.StatutContrat.ACTIF,
+        )
+    )
+    db_session.commit()
+
+    seed.reset_imx(db_session)
+    seed.run(db_session)
+
+    assert db_session.get(Adherent, "ADH-OLD") is None
+    assert {row.code_adherent for row in db_session.scalars(select(Adherent))} == {"ADH-0142"}
+    assert {row.code_debiteur for row in db_session.scalars(select(Debiteur))} == {"DEB-0087"}
+    assert {row.num_facture for row in db_session.scalars(select(Facture))} == {"FA-26-0301"}

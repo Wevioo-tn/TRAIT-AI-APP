@@ -1,12 +1,14 @@
-"""Populate demo IMX records without creating or resetting user accounts."""
+"""Populate or safely replace demo IMX records without touching users/traites."""
+import argparse
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.imx import Adherent, Debiteur, Facture, StatutContrat, StatutFacture
+from app.db.models.traite import RapprochementNlp, Traite
 
 # (code, raison_sociale, matricule_fiscal, beneficiaire_attendu, statut)
 # Dynamic non-official IMX test record supplied with the filled traite.
@@ -39,6 +41,26 @@ FACTURES: list[tuple[str, str, str, Decimal, Decimal, date, StatutFacture]] = [
     ("FA-26-0301", "ADH-0142", "DEB-0087", Decimal("8400.000"), Decimal("282.496"),
      date(2026, 7, 28), StatutFacture.ENCOURS),
 ]
+
+
+def reset_imx(session: Session) -> None:
+    """Remove all IMX values while preserving application records.
+
+    Public tables contain foreign keys to IMX. Clear those links first;
+    ``TRUNCATE ... CASCADE`` would also truncate the referring application
+    tables and is therefore deliberately not used.
+    """
+    session.execute(
+        update(RapprochementNlp).values(
+            code_adherent_matche=None,
+            code_debiteur_matche=None,
+        )
+    )
+    session.execute(update(Traite).values(code_adherent=None, code_debiteur=None))
+    session.execute(delete(Facture))
+    session.execute(delete(Debiteur))
+    session.execute(delete(Adherent))
+    session.flush()
 
 
 def run(session: Session) -> None:
@@ -82,12 +104,22 @@ def run(session: Session) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Seed the provisional IMX reference tables.")
+    parser.add_argument(
+        "--reset-imx",
+        action="store_true",
+        help="detach existing app references and replace every IMX row with the seed data",
+    )
+    args = parser.parse_args()
     settings = get_settings()
     engine = create_engine(settings.database_url, future=True)
     with Session(engine) as session:
+        if args.reset_imx:
+            reset_imx(session)
         run(session)
     print(
-        f"Seeded {len(ADHERENTS)} adherents, {len(DEBITEURS)} debiteurs, "
+        f"{'Reset IMX and seeded' if args.reset_imx else 'Seeded'} "
+        f"{len(ADHERENTS)} adherents, {len(DEBITEURS)} debiteurs, "
         f"{len(FACTURES)} factures. User accounts were not modified."
     )
 

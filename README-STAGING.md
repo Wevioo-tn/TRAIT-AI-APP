@@ -108,6 +108,21 @@ docker compose -f docker-compose.staging.yml exec backend python -m scripts.seed
 
 Seeding inserts or updates the predefined demo adherent, debtor, and invoice records. It does not create login accounts or traites. Skip it when staging uses real reference data.
 
+To replace **all** provisional IMX values with exactly the records declared
+in `back/scripts/seed.py`, use the explicit reset option during a maintenance
+window:
+
+```bash
+docker compose -f docker-compose.staging.yml exec backend alembic upgrade head
+docker compose -f docker-compose.staging.yml exec backend python -m scripts.seed --reset-imx
+```
+
+This clears `imx.factures`, `imx.debiteurs`, and `imx.adherents` in dependency
+order, after detaching their foreign-key references from existing traites and
+NLP comparisons. Users, traites, documents, decisions, and audit history are
+preserved. Do not replace this with `TRUNCATE ... CASCADE`: PostgreSQL would
+also truncate application tables that reference IMX.
+
 ## 8. Verify the deployment
 
 ```bash
